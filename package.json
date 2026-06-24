@@ -28,6 +28,7 @@
     "@effect/language-service": "catalog:",
     "@effect/tsgo": "catalog:",
     "@effect/vitest": "catalog:",
+    "@harmony/semantic-model": "workspace:*",
     "@types/node": "catalog:",
     "@typescript/native-preview": "catalog:",
     "eslint": "catalog:",
