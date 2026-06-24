@@ -16,6 +16,9 @@ L2 第一阶段落地原则
 
 L3 架构不变量与验收基线
 └── docs/first-phase/semantic-system-principles-v0.1.md
+
+工程实践
+└── docs/engineering/effect.md
 ```
 
 ## 阅读顺序
@@ -28,6 +31,8 @@ L3 架构不变量与验收基线
    然后确认第一阶段如何克制落地，哪些能力必须先做，哪些能力主动延后。
 4. `docs/first-phase/semantic-system-principles-v0.1.md`
    最后读取当前权威规范。后续架构、Schema、实现和验收都应服从这里的不变量。
+5. `docs/engineering/effect.md`
+   编写 Effect 代码时读取，确认 harness 入口、默认写法、测试规则和验证命令。
 
 ## 权威关系
 
@@ -41,5 +46,7 @@ L3 架构不变量与验收基线
 - `research-map.md` 只保存理论依据和设计启发，不直接规定实现。
 - `mvp-loop-principles.md` 只回答第一阶段如何尽快跑通最小语义闭环。
 - `semantic-system-principles-v0.1.md` 只固定原则、不变量、验收基线和重大变更规则。
+- `engineering/effect.md` 只保存本仓库编写 Effect 代码的工程入口，不替代
+  `effect-harness` 或 pinned official Effect source。
 
 具体 DSL、Semantic IR Schema、数据库、服务边界、模型调用方式和界面流程，属于下一阶段架构设计文档，不放入当前理论文档。
