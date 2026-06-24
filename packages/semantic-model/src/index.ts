@@ -11,6 +11,14 @@ export const VocabularyInputId = idPattern('vocabulary-input').pipe(Schema.brand
 export const SemanticInputId = idPattern('semantic-input').pipe(Schema.brand('SemanticInputId'))
 export type SemanticInputIdType = typeof SemanticInputId.Type
 
+export const CaseId = idPattern('case').pipe(Schema.brand('CaseId'))
+export type CaseIdType = typeof CaseId.Type
+
+export const CorrectionId = idPattern('correction').pipe(Schema.brand('CorrectionId'))
+export type CorrectionIdType = typeof CorrectionId.Type
+
+export const CaseSemanticEditId = idPattern('case-semantic-edit').pipe(Schema.brand('CaseSemanticEditId'))
+
 export const SourceSpanId = idPattern('source-span').pipe(Schema.brand('SourceSpanId'))
 
 export const DocumentSectionId = idPattern('document-section').pipe(Schema.brand('DocumentSectionId'))
@@ -102,6 +110,8 @@ export const SemanticLintClassification = Schema.Literals([
   'unknown',
 ])
 
+export const CaseStatus = Schema.Literals(['opened', 'locally_corrected'])
+
 export const LintFindingReason = Schema.Literals([
   'parse_uncertain_alias',
   'required_relation_present',
@@ -189,6 +199,28 @@ export class DocumentEvidenceSource extends Schema.Class<DocumentEvidenceSource>
   originalText: Schema.NonEmptyString,
   sections: Schema.Array(DocumentSection),
   spans: Schema.Array(SourceSpan),
+  capturedAt: Schema.NonEmptyString,
+}) {}
+
+export class CorrectionEvidenceSource extends Schema.Class<CorrectionEvidenceSource>(
+  'harmony.semantic-model/CorrectionEvidenceSource',
+)({
+  id: EvidenceSourceId,
+  evidenceKind: Schema.Literal('correction-source'),
+  caseRef: CaseId,
+  correctionRef: CorrectionId,
+  originalText: Schema.NonEmptyString,
+  spans: Schema.Array(SourceSpan),
+  capturedAt: Schema.NonEmptyString,
+}) {}
+
+export class Correction extends Schema.Class<Correction>('harmony.semantic-model/Correction')({
+  id: CorrectionId,
+  artifactKind: Schema.Literal('correction'),
+  caseId: CaseId,
+  targetIrRef: SemanticIrId,
+  evidenceSourceId: EvidenceSourceId,
+  userText: Schema.NonEmptyString,
   capturedAt: Schema.NonEmptyString,
 }) {}
 
@@ -462,6 +494,38 @@ export class SemanticIr extends Schema.Class<SemanticIr>('harmony.semantic-model
   decisionState: ParseDecisionState,
 }) {}
 
+export class Case extends Schema.Class<Case>('harmony.semantic-model/Case')({
+  id: CaseId,
+  artifactKind: Schema.Literal('case'),
+  originalPromptInputRef: SemanticInputId,
+  originalPromptEvidenceSourceId: EvidenceSourceId,
+  originalIrRef: SemanticIrId,
+  currentIrRef: SemanticIrId,
+  currentSemanticIr: SemanticIr,
+  status: CaseStatus,
+  openedAt: Schema.NonEmptyString,
+  updatedAt: Schema.NonEmptyString,
+}) {}
+
+export class SelectRequestInterpretationEdit extends Schema.Class<SelectRequestInterpretationEdit>(
+  'harmony.semantic-model/SelectRequestInterpretationEdit',
+)({
+  id: CaseSemanticEditId,
+  editKind: Schema.Literal('SelectRequestInterpretation'),
+  caseId: CaseId,
+  correctionId: CorrectionId,
+  targetIrRef: SemanticIrId,
+  selectedInterpretationId: CompetingInterpretationId,
+  selectedFrameId: RequestFrameId,
+  action: RequestAction,
+  prohibitedActions: Schema.Array(RequestAction),
+  rejectedInterpretationIds: Schema.Array(CompetingInterpretationId),
+  evidenceRefs: Schema.Array(EvidenceRef),
+}) {}
+
+export const CaseSemanticEdit = Schema.Union([SelectRequestInterpretationEdit])
+export type CaseSemanticEditType = typeof CaseSemanticEdit.Type
+
 export class ClarificationOption extends Schema.Class<ClarificationOption>(
   'harmony.semantic-model/ClarificationOption',
 )({
@@ -627,6 +691,25 @@ export class SemanticIrProducedRecord extends Schema.Class<SemanticIrProducedRec
   semanticIr: SemanticIr,
 }) {}
 
+export class CaseOpenedRecord extends Schema.Class<CaseOpenedRecord>(
+  'harmony.semantic-model/CaseOpenedRecord',
+)({
+  id: LedgerRecordId,
+  recordKind: Schema.Literal('CaseOpened'),
+  recordedAt: Schema.NonEmptyString,
+  case: Case,
+}) {}
+
+export class CorrectionCapturedRecord extends Schema.Class<CorrectionCapturedRecord>(
+  'harmony.semantic-model/CorrectionCapturedRecord',
+)({
+  id: LedgerRecordId,
+  recordKind: Schema.Literal('CorrectionCaptured'),
+  recordedAt: Schema.NonEmptyString,
+  source: CorrectionEvidenceSource,
+  correction: Correction,
+}) {}
+
 export class ActiveSemanticEnvironmentConstructedRecord extends Schema.Class<ActiveSemanticEnvironmentConstructedRecord>(
   'harmony.semantic-model/ActiveSemanticEnvironmentConstructedRecord',
 )({
@@ -645,6 +728,20 @@ export class SemanticLintReportProducedRecord extends Schema.Class<SemanticLintR
   report: SemanticLintReport,
 }) {}
 
+export class CaseSemanticEditAppliedRecord extends Schema.Class<CaseSemanticEditAppliedRecord>(
+  'harmony.semantic-model/CaseSemanticEditAppliedRecord',
+)({
+  id: LedgerRecordId,
+  recordKind: Schema.Literal('CaseSemanticEditApplied'),
+  recordedAt: Schema.NonEmptyString,
+  caseId: CaseId,
+  correctionId: CorrectionId,
+  edit: CaseSemanticEdit,
+  beforeIrRef: SemanticIrId,
+  afterIrRef: SemanticIrId,
+  case: Case,
+}) {}
+
 export const LedgerRecord = Schema.Union([
   VocabularySourceImportedRecord,
   SemanticPackageDraftCompiledRecord,
@@ -652,8 +749,11 @@ export const LedgerRecord = Schema.Union([
   PromptInputCapturedRecord,
   DocumentInputCapturedRecord,
   SemanticIrProducedRecord,
+  CaseOpenedRecord,
+  CorrectionCapturedRecord,
   ActiveSemanticEnvironmentConstructedRecord,
   SemanticLintReportProducedRecord,
+  CaseSemanticEditAppliedRecord,
 ])
 export type LedgerRecordType = typeof LedgerRecord.Type
 
@@ -703,5 +803,34 @@ export class ActiveEnvironmentBuildResult extends Schema.Class<ActiveEnvironment
 )({
   environment: ActiveSemanticEnvironment,
   ledgerRecord: ActiveSemanticEnvironmentConstructedRecord,
+  ledgerRecords: Schema.Array(LedgerRecord),
+}) {}
+
+export class CaseOpenResult extends Schema.Class<CaseOpenResult>(
+  'harmony.semantic-model/CaseOpenResult',
+)({
+  case: Case,
+  ledgerRecord: CaseOpenedRecord,
+  ledgerRecords: Schema.Array(LedgerRecord),
+}) {}
+
+export class CorrectionCaptureResult extends Schema.Class<CorrectionCaptureResult>(
+  'harmony.semantic-model/CorrectionCaptureResult',
+)({
+  source: CorrectionEvidenceSource,
+  correction: Correction,
+  ledgerRecord: CorrectionCapturedRecord,
+  ledgerRecords: Schema.Array(LedgerRecord),
+}) {}
+
+export class CaseSemanticEditApplicationResult extends Schema.Class<CaseSemanticEditApplicationResult>(
+  'harmony.semantic-model/CaseSemanticEditApplicationResult',
+)({
+  case: Case,
+  correction: Correction,
+  edit: CaseSemanticEdit,
+  beforeSemanticIr: SemanticIr,
+  afterSemanticIr: SemanticIr,
+  appliedRecord: CaseSemanticEditAppliedRecord,
   ledgerRecords: Schema.Array(LedgerRecord),
 }) {}
