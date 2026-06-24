@@ -21,6 +21,12 @@ export const PublishedPackageId = idPattern('published-package').pipe(Schema.bra
 
 export const PackageVersionId = idPattern('package-version').pipe(Schema.brand('PackageVersionId'))
 
+export const ActiveEnvironmentId = idPattern('active-environment').pipe(Schema.brand('ActiveEnvironmentId'))
+
+export const LocalSemanticContextId = idPattern('local-context').pipe(Schema.brand('LocalSemanticContextId'))
+
+export const SemanticKernelId = idPattern('semantic-kernel').pipe(Schema.brand('SemanticKernelId'))
+
 export const TermId = idPattern('term').pipe(Schema.brand('TermId'))
 
 export const LexicalSenseId = idPattern('lexical-sense').pipe(Schema.brand('LexicalSenseId'))
@@ -40,6 +46,10 @@ export const VocabularyKind = Schema.Literals(['base', 'domain'])
 export const ArtifactStatus = Schema.Literals(['extracted', 'candidate'])
 
 export const AssertionLifecycle = Schema.Literals(['draft', 'published'])
+
+export const EnvironmentPackageRole = Schema.Literals(['base', 'domain'])
+
+export const PackageActivationReason = Schema.Literals(['default_base_layer', 'explicit_domain_toggle'])
 
 export class SourceSpan extends Schema.Class<SourceSpan>('harmony.semantic-model/SourceSpan')({
   id: SourceSpanId,
@@ -191,6 +201,87 @@ export class PackageVersion extends Schema.Class<PackageVersion>('harmony.semant
   publishedAt: Schema.NonEmptyString,
 }) {}
 
+export class SemanticKernelIdentity extends Schema.Class<SemanticKernelIdentity>(
+  'harmony.semantic-model/SemanticKernelIdentity',
+)({
+  id: SemanticKernelId,
+  protocolVersion: Schema.Literal('semantic-kernel.v1'),
+  version: Schema.NonEmptyString,
+}) {}
+
+export class LocalSemanticContext extends Schema.Class<LocalSemanticContext>(
+  'harmony.semantic-model/LocalSemanticContext',
+)({
+  id: LocalSemanticContextId,
+  contextKind: Schema.Literal('case-local'),
+  description: Schema.NonEmptyString,
+  evidenceRefs: Schema.Array(EvidenceRef),
+}) {}
+
+export class PackageActivation extends Schema.Class<PackageActivation>(
+  'harmony.semantic-model/PackageActivation',
+)({
+  packageId: PackageId,
+  packageVersionId: PackageVersionId,
+  version: Schema.NonEmptyString,
+  publishedPackageId: PublishedPackageId,
+  namespace: Namespace,
+  role: EnvironmentPackageRole,
+  activationReason: PackageActivationReason,
+  sourceIds: Schema.Array(EvidenceSourceId),
+  ledgerRecordIds: Schema.Array(LedgerRecordId),
+}) {}
+
+export class EnvironmentSemanticBinding extends Schema.Class<EnvironmentSemanticBinding>(
+  'harmony.semantic-model/EnvironmentSemanticBinding',
+)({
+  termId: TermId,
+  lexicalSenseId: LexicalSenseId,
+  conceptId: ConceptId,
+  definitionId: DefinitionId,
+  termLabel: Schema.NonEmptyString,
+  definitionText: Schema.NonEmptyString,
+  packageId: PackageId,
+  packageVersionId: PackageVersionId,
+  namespace: Namespace,
+  packageRole: EnvironmentPackageRole,
+  evidenceRefs: Schema.Array(EvidenceRef),
+}) {}
+
+export class ActiveEnvironmentProvenance extends Schema.Class<ActiveEnvironmentProvenance>(
+  'harmony.semantic-model/ActiveEnvironmentProvenance',
+)({
+  basePackageId: PackageId,
+  requestedDomainPackageIds: Schema.Array(PackageId),
+  enabledDomainPackageIds: Schema.Array(PackageId),
+  packageVersionIds: Schema.Array(PackageVersionId),
+  sourceIds: Schema.Array(EvidenceSourceId),
+  ledgerRecordIds: Schema.Array(LedgerRecordId),
+  createdAt: Schema.NonEmptyString,
+}) {}
+
+export class ActiveSemanticEnvironment extends Schema.Class<ActiveSemanticEnvironment>(
+  'harmony.semantic-model/ActiveSemanticEnvironment',
+)({
+  id: ActiveEnvironmentId,
+  artifactKind: Schema.Literal('active-semantic-environment'),
+  semanticKernel: SemanticKernelIdentity,
+  baseLayer: PackageActivation,
+  enabledDomainPackages: Schema.Array(PackageActivation),
+  localContext: LocalSemanticContext,
+  semanticBindings: Schema.Array(EnvironmentSemanticBinding),
+  provenance: ActiveEnvironmentProvenance,
+  createdAt: Schema.NonEmptyString,
+}) {}
+
+export class ActiveEnvironmentBuildRequest extends Schema.Class<ActiveEnvironmentBuildRequest>(
+  'harmony.semantic-model/ActiveEnvironmentBuildRequest',
+)({
+  environmentId: ActiveEnvironmentId,
+  localContext: LocalSemanticContext,
+  enabledDomainPackageIds: Schema.Array(PackageId),
+}) {}
+
 export class VocabularyCompileResult extends Schema.Class<VocabularyCompileResult>(
   'harmony.semantic-model/VocabularyCompileResult',
 )({
@@ -233,10 +324,20 @@ export class PackageVersionPublishedRecord extends Schema.Class<PackageVersionPu
   packageVersion: PackageVersion,
 }) {}
 
+export class ActiveSemanticEnvironmentConstructedRecord extends Schema.Class<ActiveSemanticEnvironmentConstructedRecord>(
+  'harmony.semantic-model/ActiveSemanticEnvironmentConstructedRecord',
+)({
+  id: LedgerRecordId,
+  recordKind: Schema.Literal('ActiveSemanticEnvironmentConstructed'),
+  recordedAt: Schema.NonEmptyString,
+  environment: ActiveSemanticEnvironment,
+}) {}
+
 export const LedgerRecord = Schema.Union([
   VocabularySourceImportedRecord,
   SemanticPackageDraftCompiledRecord,
   PackageVersionPublishedRecord,
+  ActiveSemanticEnvironmentConstructedRecord,
 ])
 export type LedgerRecordType = typeof LedgerRecord.Type
 
@@ -260,5 +361,13 @@ export class CompileAndPublishResult extends Schema.Class<CompileAndPublishResul
   publishedPackage: PublishedSemanticPackage,
   packageVersion: PackageVersion,
   currentView: PackageCurrentView,
+  ledgerRecords: Schema.Array(LedgerRecord),
+}) {}
+
+export class ActiveEnvironmentBuildResult extends Schema.Class<ActiveEnvironmentBuildResult>(
+  'harmony.semantic-model/ActiveEnvironmentBuildResult',
+)({
+  environment: ActiveSemanticEnvironment,
+  ledgerRecord: ActiveSemanticEnvironmentConstructedRecord,
   ledgerRecords: Schema.Array(LedgerRecord),
 }) {}

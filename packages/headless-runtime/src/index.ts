@@ -1,17 +1,24 @@
 import type {
+  ActiveEnvironmentBuildRequest,
   LedgerRecordType as LedgerRecord,
   PackageIdType as PackageId,
   SourceSpan,
   VocabularyInput,
 } from '@harmony/semantic-model'
 import {
+  ActiveEnvironmentBuildResult,
+  ActiveEnvironmentProvenance,
+  ActiveSemanticEnvironment,
+  ActiveSemanticEnvironmentConstructedRecord,
   CompileAndPublishResult,
   Concept,
   Definition,
+  EnvironmentSemanticBinding,
   EvidenceRef,
   EvidenceSource,
   LedgerRecord as LedgerRecordSchema,
   LexicalSense,
+  PackageActivation,
   PackageCurrentView,
   PackageId as PackageIdSchema,
   PackagePublishResult,
@@ -19,6 +26,7 @@ import {
   PackageVersionPublishedRecord,
   PublishedSemanticPackage,
   RuntimeBindingIdentity,
+  SemanticKernelIdentity,
   SemanticPackageDraft,
   SemanticPackageDraftCompiledRecord,
   Term,
@@ -31,6 +39,13 @@ const deterministicInstant = '2026-06-24T00:00:00.000Z'
 const compilerVersion = 'deterministic-glossary-compiler@0.1.0'
 const publisherVersion = 'deterministic-package-publisher@0.1.0'
 const effectVersion = 'effect@4.0.0-beta.83'
+const activeEnvironmentBuilderVersion = 'deterministic-active-environment-builder@0.1.0'
+
+export const defaultSemanticKernelIdentity = new SemanticKernelIdentity({
+  id: Schema.decodeUnknownSync(SemanticKernelIdentity.fields.id)('semantic-kernel:harmony-v1'),
+  protocolVersion: 'semantic-kernel.v1',
+  version: 'harmony-semantic-kernel@0.1.0',
+})
 
 export class VocabularyCompileError extends Schema.TaggedErrorClass<VocabularyCompileError>()(
   'VocabularyCompileError',
@@ -151,6 +166,82 @@ function isPackageVersionPublishedRecord(record: LedgerRecord): record is Packag
 
 function isVocabularySourceImportedRecord(record: LedgerRecord): record is VocabularySourceImportedRecord {
   return record.recordKind === 'VocabularySourceImported'
+}
+
+function isSemanticPackageDraftCompiledRecord(record: LedgerRecord): record is SemanticPackageDraftCompiledRecord {
+  return record.recordKind === 'SemanticPackageDraftCompiled'
+}
+
+function unique<A>(items: ReadonlyArray<A>): Array<A> {
+  return Array.from(new Set(items))
+}
+
+function packageSourceIds(records: ReadonlyArray<LedgerRecord>, packageId: PackageId) {
+  return unique(records.flatMap(record =>
+    isSemanticPackageDraftCompiledRecord(record) && record.draft.packageId === packageId
+      ? [record.draft.sourceId]
+      : [],
+  ))
+}
+
+function packageLedgerRecordIds(records: ReadonlyArray<LedgerRecord>, packageId: PackageId) {
+  const sourceIds = packageSourceIds(records, packageId)
+  return unique(records.flatMap((record) => {
+    if (isVocabularySourceImportedRecord(record) && sourceIds.includes(record.source.id)) {
+      return [record.id]
+    }
+    if (isSemanticPackageDraftCompiledRecord(record) && record.draft.packageId === packageId) {
+      return [record.id]
+    }
+    if (isPackageVersionPublishedRecord(record) && record.packageVersion.packageId === packageId) {
+      return [record.id]
+    }
+    return []
+  }))
+}
+
+function packageActivationFromView(
+  records: ReadonlyArray<LedgerRecord>,
+  view: PackageCurrentView,
+  role: 'base' | 'domain',
+  activationReason: 'default_base_layer' | 'explicit_domain_toggle',
+) {
+  return new PackageActivation({
+    packageId: view.packageId,
+    packageVersionId: view.packageVersion.id,
+    version: view.packageVersion.version,
+    publishedPackageId: view.publishedPackage.id,
+    namespace: view.publishedPackage.namespace,
+    role,
+    activationReason,
+    sourceIds: packageSourceIds(records, view.packageId),
+    ledgerRecordIds: packageLedgerRecordIds(records, view.packageId),
+  })
+}
+
+function semanticBindingsFromPackage(view: PackageCurrentView, activation: PackageActivation) {
+  return view.publishedPackage.artifacts.lexicalSenses.flatMap((sense) => {
+    const term = view.publishedPackage.artifacts.terms.find(candidate => candidate.id === sense.termId)
+    const definition = view.publishedPackage.artifacts.definitions.find(candidate => candidate.id === sense.definitionId)
+    if (term === undefined || definition === undefined) {
+      return []
+    }
+    return [
+      new EnvironmentSemanticBinding({
+        termId: term.id,
+        lexicalSenseId: sense.id,
+        conceptId: sense.conceptId,
+        definitionId: definition.id,
+        termLabel: term.label,
+        definitionText: definition.text,
+        packageId: activation.packageId,
+        packageVersionId: activation.packageVersionId,
+        namespace: activation.namespace,
+        packageRole: activation.role,
+        evidenceRefs: sense.evidenceRefs,
+      }),
+    ]
+  })
 }
 
 export class VocabularyCompiler extends Context.Service<VocabularyCompiler, {
@@ -409,3 +500,132 @@ export class GlossaryPackageWorkflow extends Context.Service<GlossaryPackageWork
 export const layerInMemory = GlossaryPackageWorkflow.layer.pipe(
   Layer.provideMerge(SemanticLedger.layerInMemory),
 )
+
+export class SemanticKernel extends Context.Service<SemanticKernel, {
+  readonly identity: SemanticKernelIdentity
+}>()('harmony/headless-runtime/SemanticKernel') {
+  static layerFromIdentity(identity: SemanticKernelIdentity) {
+    return Layer.succeed(
+      SemanticKernel,
+      SemanticKernel.of({ identity }),
+    )
+  }
+
+  static readonly layerDefault = this.layerFromIdentity(defaultSemanticKernelIdentity)
+}
+
+export class BaseSemanticLayer extends Context.Service<BaseSemanticLayer, {
+  readonly packageId: PackageId
+}>()('harmony/headless-runtime/BaseSemanticLayer') {
+  static layerFromPackageId(packageId: PackageId) {
+    return Layer.succeed(
+      BaseSemanticLayer,
+      BaseSemanticLayer.of({ packageId }),
+    )
+  }
+}
+
+export class ActiveEnvironmentBuilder extends Context.Service<ActiveEnvironmentBuilder, {
+  build: (request: ActiveEnvironmentBuildRequest) => Effect.Effect<
+    ActiveEnvironmentBuildResult,
+    LedgerViewNotFound | Schema.SchemaError
+  >
+}>()('harmony/headless-runtime/ActiveEnvironmentBuilder') {
+  static readonly layer = Layer.effect(
+    ActiveEnvironmentBuilder,
+    Effect.gen(function* () {
+      const kernel = yield* SemanticKernel
+      const baseLayer = yield* BaseSemanticLayer
+      const ledger = yield* SemanticLedger
+
+      const build = Effect.fn('ActiveEnvironmentBuilder.build')(
+        function* (request: ActiveEnvironmentBuildRequest) {
+          const recordsBeforeBuild = yield* ledger.records
+          const baseView = yield* ledger.currentPackageView(baseLayer.packageId)
+          const requestedDomainPackageIds = unique(request.enabledDomainPackageIds)
+          const domainViews = yield* Effect.forEach(
+            requestedDomainPackageIds,
+            packageId => ledger.currentPackageView(packageId),
+          )
+
+          const baseActivation = packageActivationFromView(
+            recordsBeforeBuild,
+            baseView,
+            'base',
+            'default_base_layer',
+          )
+          const domainActivations = domainViews.map(view =>
+            packageActivationFromView(
+              recordsBeforeBuild,
+              view,
+              'domain',
+              'explicit_domain_toggle',
+            ))
+          const packageActivations = [baseActivation, ...domainActivations]
+          const semanticBindings = [
+            ...semanticBindingsFromPackage(baseView, baseActivation),
+            ...domainViews.flatMap((view, index) => {
+              const activation = domainActivations[index]
+              return activation === undefined ? [] : semanticBindingsFromPackage(view, activation)
+            }),
+          ]
+          const packageVersionIds = packageActivations.map(activation => activation.packageVersionId)
+          const sourceIds = unique(packageActivations.flatMap(activation => activation.sourceIds))
+          const dependencyLedgerRecordIds = unique(packageActivations.flatMap(activation => activation.ledgerRecordIds))
+          const recordsBeforeAppend = yield* ledger.records
+          const environmentRecordId = Schema.decodeUnknownSync(ActiveSemanticEnvironmentConstructedRecord.fields.id)(
+            `ledger-record:${request.environmentId}:${recordsBeforeAppend.length + 1}-${activeEnvironmentBuilderVersion}`,
+          )
+          const environmentLedgerRecordIds = unique([...dependencyLedgerRecordIds, environmentRecordId])
+          const environment = new ActiveSemanticEnvironment({
+            id: request.environmentId,
+            artifactKind: 'active-semantic-environment',
+            semanticKernel: kernel.identity,
+            baseLayer: baseActivation,
+            enabledDomainPackages: domainActivations,
+            localContext: request.localContext,
+            semanticBindings,
+            provenance: new ActiveEnvironmentProvenance({
+              basePackageId: baseActivation.packageId,
+              requestedDomainPackageIds,
+              enabledDomainPackageIds: domainActivations.map(activation => activation.packageId),
+              packageVersionIds,
+              sourceIds,
+              ledgerRecordIds: environmentLedgerRecordIds,
+              createdAt: deterministicInstant,
+            }),
+            createdAt: deterministicInstant,
+          })
+          const record = new ActiveSemanticEnvironmentConstructedRecord({
+            id: environmentRecordId,
+            recordKind: 'ActiveSemanticEnvironmentConstructed',
+            recordedAt: deterministicInstant,
+            environment,
+          })
+
+          yield* ledger.append(record)
+          const ledgerRecords = yield* ledger.records
+
+          return new ActiveEnvironmentBuildResult({
+            environment,
+            ledgerRecord: record,
+            ledgerRecords,
+          })
+        },
+      )
+
+      return ActiveEnvironmentBuilder.of({ build })
+    }),
+  )
+}
+
+export function layerInMemoryWithActiveEnvironment(
+  basePackageId: PackageId,
+  kernelIdentity: SemanticKernelIdentity = defaultSemanticKernelIdentity,
+) {
+  return ActiveEnvironmentBuilder.layer.pipe(
+    Layer.provide(SemanticKernel.layerFromIdentity(kernelIdentity)),
+    Layer.provide(BaseSemanticLayer.layerFromPackageId(basePackageId)),
+    Layer.provideMerge(layerInMemory),
+  )
+}
