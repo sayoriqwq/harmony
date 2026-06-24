@@ -1988,14 +1988,101 @@ function definitionTextForPatchedPackage(view: PackageCurrentView, impact: Packa
     .join('\n')
 }
 
-function latestRegressionRunRecord(
+function candidatePackageVersionIdForView(records: ReadonlyArray<LedgerRecord>, view: PackageCurrentView) {
+  const nextVersion = countPublishedVersions(records, view.packageId) + 1
+  return Schema.decodeUnknownSync(PackageVersion.fields.id)(
+    `package-version:${view.publishedPackage.namespace}:v${nextVersion}`,
+  )
+}
+
+function isRegressionCaseCreatedRecord(record: LedgerRecord): record is RegressionCaseCreatedRecord {
+  return record.recordKind === 'RegressionCaseCreated'
+}
+
+function relevantRegressionCaseRecords(
   records: ReadonlyArray<LedgerRecord>,
   candidate: SemanticPatchCandidate,
+  targetPackage: SemanticPackageRef,
+) {
+  return records
+    .filter(isRegressionCaseCreatedRecord)
+    .filter(record => record.regressionCase.targetPackage.packageId === targetPackage.packageId)
+    .filter(record =>
+      record.regressionCase.caseRole === 'historical_behavior'
+      || record.regressionCase.patchCandidateId === candidate.id,
+    )
+}
+
+function latestRegressionRunRecordForCase(
+  records: ReadonlyArray<LedgerRecord>,
+  candidate: SemanticPatchCandidate,
+  regressionCase: RegressionCase,
 ) {
   return records
     .filter(isRegressionRunCompletedRecord)
     .filter(record => record.regressionRun.patchCandidateId === candidate.id)
+    .filter(record => record.regressionRun.regressionCaseId === regressionCase.id)
     .at(-1)
+}
+
+function expectedTextForAssertion(assertion: RegressionCase['expectedAssertions'][number]) {
+  switch (assertion.assertionKind) {
+    case 'package_definition_contains':
+      return assertion.requiredText
+    case 'package_definition_equals':
+      return assertion.expectedText
+    case 'request_clarification_expected':
+    case 'semantic_unknown_expected':
+      return assertion.summary
+  }
+
+  const _exhaustive: never = assertion
+  return _exhaustive
+}
+
+function actualTextForAssertion(assertion: RegressionCase['expectedAssertions'][number], packageDefinitionText: string) {
+  switch (assertion.assertionKind) {
+    case 'package_definition_contains':
+    case 'package_definition_equals':
+      return packageDefinitionText
+    case 'request_clarification_expected':
+    case 'semantic_unknown_expected':
+      return `Package definition regression runner did not observe ${assertion.assertionKind}.`
+  }
+
+  const _exhaustive: never = assertion
+  return _exhaustive
+}
+
+function assertionPassed(assertion: RegressionCase['expectedAssertions'][number], packageDefinitionText: string) {
+  switch (assertion.assertionKind) {
+    case 'package_definition_contains':
+      return packageDefinitionText.includes(assertion.requiredText)
+    case 'package_definition_equals':
+      return packageDefinitionText === assertion.expectedText
+    case 'request_clarification_expected':
+    case 'semantic_unknown_expected':
+      return false
+  }
+
+  const _exhaustive: never = assertion
+  return _exhaustive
+}
+
+function resultForAssertion(
+  assertion: RegressionCase['expectedAssertions'][number],
+  packageDefinitionText: string,
+) {
+  const outcome = assertionPassed(assertion, packageDefinitionText) ? 'passed' : 'failed'
+  return new RegressionAssertionResult({
+    assertionKind: assertion.assertionKind,
+    expectationKind: assertion.expectationKind,
+    outcome,
+    expected: expectedTextForAssertion(assertion),
+    actual: actualTextForAssertion(assertion, packageDefinitionText),
+    expectedAssertion: assertion,
+    evidenceRefs: assertion.evidenceRefs,
+  })
 }
 
 export class SemanticPatchPublicationWorkflow extends Context.Service<SemanticPatchPublicationWorkflow, {
@@ -2006,6 +2093,9 @@ export class SemanticPatchPublicationWorkflow extends Context.Service<SemanticPa
     regressionCase: RegressionCase,
     candidate: SemanticPatchCandidate,
   ) => Effect.Effect<RegressionRunResult, PatchPublicationBlocked | LedgerViewNotFound | Schema.SchemaError>
+  runRegressionSuite: (
+    candidate: SemanticPatchCandidate,
+  ) => Effect.Effect<ReadonlyArray<RegressionRunResult>, PatchPublicationBlocked | LedgerViewNotFound | Schema.SchemaError>
   publishCandidate: (
     candidate: SemanticPatchCandidate,
   ) => Effect.Effect<
@@ -2031,11 +2121,16 @@ export class SemanticPatchPublicationWorkflow extends Context.Service<SemanticPa
             sourceCaseId: candidate.sourceCaseId,
             sourceCorrectionId: candidate.sourceCorrectionId,
             targetPackage,
-            assertion: new PackageDefinitionContainsAssertion({
-              assertionKind: 'package_definition_contains',
-              packageId: targetPackage.packageId,
-              requiredText: impact.expectedDefinitionText,
-            }),
+            caseRole: 'target_fix',
+            expectedAssertions: [
+              new PackageDefinitionContainsAssertion({
+                assertionKind: 'package_definition_contains',
+                expectationKind: 'confirmed_success',
+                packageId: targetPackage.packageId,
+                requiredText: impact.expectedDefinitionText,
+                evidenceRefs: candidate.evidenceRefs,
+              }),
+            ],
             rationale: impact.expectedBehavior,
             createdAt: deterministicInstant,
           })
@@ -2066,11 +2161,18 @@ export class SemanticPatchPublicationWorkflow extends Context.Service<SemanticPa
           const targetPackage = yield* domainPackageRefForCandidate(candidate)
           const impact = yield* packageDefinitionImpactForCandidate(candidate)
 
-          if (decodedCase.patchCandidateId !== candidate.id) {
+          if (decodedCase.patchCandidateId !== candidate.id && decodedCase.caseRole !== 'historical_behavior') {
             return yield* new PatchPublicationBlocked({
               candidateId: candidate.id,
               expectedOutcome: 'regression_run_passed',
               message: 'RegressionCase patchCandidateId must match the Semantic Patch Candidate.',
+            })
+          }
+          if (decodedCase.expectedAssertions.length === 0) {
+            return yield* new PatchPublicationBlocked({
+              candidateId: candidate.id,
+              expectedOutcome: 'regression_run_passed',
+              message: 'RegressionCase must contain at least one structured expected assertion.',
             })
           }
           if (decodedCase.targetPackage.packageId !== targetPackage.packageId) {
@@ -2083,15 +2185,12 @@ export class SemanticPatchPublicationWorkflow extends Context.Service<SemanticPa
 
           const view = yield* ledger.currentPackageView(targetPackage.packageId)
           const actual = definitionTextForPatchedPackage(view, impact)
-          const assertion = decodedCase.assertion
-          const passed = actual.includes(assertion.requiredText)
+          const candidatePackageVersionId = candidatePackageVersionIdForView(yield* ledger.records, view)
+          const assertionResults = decodedCase.expectedAssertions.map(assertion =>
+            resultForAssertion(assertion, actual),
+          )
+          const passed = assertionResults.every(result => result.outcome === 'passed')
           const outcome = passed ? 'passed' : 'failed'
-          const assertionResult = new RegressionAssertionResult({
-            assertionKind: 'package_definition_contains',
-            outcome,
-            expected: assertion.requiredText,
-            actual,
-          })
           const regressionRun = new RegressionRun({
             id: Schema.decodeUnknownSync(RegressionRun.fields.id)(
               `regression-run:${decodedCase.id}:${outcome}`,
@@ -2099,10 +2198,14 @@ export class SemanticPatchPublicationWorkflow extends Context.Service<SemanticPa
             artifactKind: 'regression-run',
             regressionCaseId: decodedCase.id,
             patchCandidateId: candidate.id,
+            sourceCaseId: decodedCase.sourceCaseId,
+            sourceCorrectionId: decodedCase.sourceCorrectionId,
             targetPackageId: targetPackage.packageId,
             targetPackageVersionId: view.packageVersion.id,
+            oldPackageVersionId: view.packageVersion.id,
+            candidatePackageVersionId,
             outcome,
-            assertionResults: [assertionResult],
+            assertionResults,
             startedAt: deterministicInstant,
             completedAt: deterministicInstant,
           })
@@ -2135,24 +2238,87 @@ export class SemanticPatchPublicationWorkflow extends Context.Service<SemanticPa
         },
       )
 
+      const runRegressionSuite = Effect.fn('SemanticPatchPublicationWorkflow.runRegressionSuite')(
+        function* (candidate: SemanticPatchCandidate) {
+          const targetPackage = yield* domainPackageRefForCandidate(candidate)
+          yield* packageDefinitionImpactForCandidate(candidate)
+          const records = yield* ledger.records
+          const regressionCases = relevantRegressionCaseRecords(records, candidate, targetPackage)
+          if (regressionCases.length === 0) {
+            return yield* new PatchPublicationBlocked({
+              candidateId: candidate.id,
+              expectedOutcome: 'regression_run_passed',
+              message: 'Publication requires at least one target RegressionCase for this candidate.',
+            })
+          }
+          return yield* Effect.forEach(
+            regressionCases,
+            record => runRegression(record.regressionCase, candidate),
+          )
+        },
+      )
+
       const publishCandidate = Effect.fn('SemanticPatchPublicationWorkflow.publishCandidate')(
         function* (candidate: SemanticPatchCandidate) {
           const targetPackage = yield* domainPackageRefForCandidate(candidate)
           const impact = yield* packageDefinitionImpactForCandidate(candidate)
           const recordsBeforePublishAttempt = yield* ledger.records
-          const latestRunRecord = latestRegressionRunRecord(recordsBeforePublishAttempt, candidate)
-          if (latestRunRecord === undefined) {
+          const relevantCaseRecords = relevantRegressionCaseRecords(recordsBeforePublishAttempt, candidate, targetPackage)
+          if (relevantCaseRecords.length === 0) {
             return yield* new PatchPublicationBlocked({
               candidateId: candidate.id,
               expectedOutcome: 'regression_run_passed',
-              message: 'Publication requires a completed passing RegressionRun for this candidate.',
+              message: 'Publication requires at least one RegressionCase for this candidate.',
             })
           }
-          if (latestRunRecord.regressionRun.outcome !== 'passed') {
+
+          const runRecords = relevantCaseRecords.map(record => ({
+            caseRecord: record,
+            runRecord: latestRegressionRunRecordForCase(recordsBeforePublishAttempt, candidate, record.regressionCase),
+          }))
+          const missingRun = runRecords.find(record => record.runRecord === undefined)
+          if (missingRun !== undefined) {
+            const expectedOutcome = missingRun.caseRecord.regressionCase.caseRole === 'historical_behavior'
+              ? 'historical_behavior_preserved'
+              : 'regression_run_passed'
+            return yield* new PatchPublicationBlocked({
+              candidateId: candidate.id,
+              expectedOutcome,
+              message: 'Publication requires each relevant RegressionCase to be rerun against this candidate.',
+            })
+          }
+
+          const failedHistorical = runRecords.find(record =>
+            record.caseRecord.regressionCase.caseRole === 'historical_behavior'
+            && record.runRecord?.regressionRun.outcome !== 'passed',
+          )
+          if (failedHistorical !== undefined) {
+            return yield* new PatchPublicationBlocked({
+              candidateId: candidate.id,
+              expectedOutcome: 'historical_behavior_preserved',
+              message: 'Publication is blocked because the candidate changes confirmed historical behavior.',
+            })
+          }
+
+          const failedTarget = runRecords.find(record =>
+            record.caseRecord.regressionCase.caseRole === 'target_fix'
+            && record.runRecord?.regressionRun.outcome !== 'passed',
+          )
+          if (failedTarget !== undefined) {
             return yield* new PatchPublicationBlocked({
               candidateId: candidate.id,
               expectedOutcome: 'regression_run_passed',
-              message: 'Publication requires the latest RegressionRun for this candidate to pass.',
+              message: 'Publication requires the target RegressionRun for this candidate to pass.',
+            })
+          }
+          const publicationRunRecord = runRecords.find(record =>
+            record.caseRecord.regressionCase.caseRole === 'target_fix',
+          )?.runRecord
+          if (publicationRunRecord === undefined) {
+            return yield* new PatchPublicationBlocked({
+              candidateId: candidate.id,
+              expectedOutcome: 'regression_run_passed',
+              message: 'Publication requires a target RegressionCase for this candidate.',
             })
           }
 
@@ -2203,8 +2369,8 @@ export class SemanticPatchPublicationWorkflow extends Context.Service<SemanticPa
               sourceCorrectionId: candidate.sourceCorrectionId,
               sourceCaseSemanticEditId: candidate.sourceCaseSemanticEditId,
               sourceDiagnosisId: candidate.sourceDiagnosisId,
-              regressionCaseId: latestRunRecord.regressionRun.regressionCaseId,
-              regressionRunId: latestRunRecord.regressionRun.id,
+              regressionCaseId: publicationRunRecord.regressionRun.regressionCaseId,
+              regressionRunId: publicationRunRecord.regressionRun.id,
               previousPackageVersionId: previousView.packageVersion.id,
             }),
           })
@@ -2221,7 +2387,7 @@ export class SemanticPatchPublicationWorkflow extends Context.Service<SemanticPa
             patchCandidate: publishedCandidate,
             packageVersionId: packageVersion.id,
             publishedPackageId: publishedPackage.id,
-            regressionRunId: latestRunRecord.regressionRun.id,
+            regressionRunId: publicationRunRecord.regressionRun.id,
           })
           yield* ledger.append(patchCandidatePublishedRecord)
 
@@ -2230,7 +2396,7 @@ export class SemanticPatchPublicationWorkflow extends Context.Service<SemanticPa
           return yield* Schema.decodeUnknownEffect(SemanticPatchPublicationResult)(
             new SemanticPatchPublicationResult({
               patchCandidate: publishedCandidate,
-              regressionRun: latestRunRecord.regressionRun,
+              regressionRun: publicationRunRecord.regressionRun,
               publishedPackage,
               packageVersion,
               previousPackageVersion: previousView.packageVersion,
@@ -2246,6 +2412,7 @@ export class SemanticPatchPublicationWorkflow extends Context.Service<SemanticPa
       return SemanticPatchPublicationWorkflow.of({
         createRegressionCase,
         runRegression,
+        runRegressionSuite,
         publishCandidate,
       })
     }),

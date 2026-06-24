@@ -1,7 +1,6 @@
 import type {
   LedgerRecordType as LedgerRecord,
   PackageVersionPublishedRecord,
-  RegressionCaseCreatedRecord,
   RegressionRunCompletedRecord,
   RegressionRunResult,
   SemanticPatchCandidateProposedRecord,
@@ -27,13 +26,17 @@ import {
   LedgerRecord as LedgerRecordSchema,
   LocalSemanticContext,
   PackageDefinitionContainsAssertion,
+  PackageDefinitionEqualsAssertion,
   PackageId,
   PromptInput,
   RegressionCase,
+  RegressionCaseCreatedRecord,
   RegressionRun,
+  RequestClarificationExpectedAssertion,
   SelectRequestInterpretationEdit,
   SemanticPatchCandidate,
   SemanticPatchPublicationResult,
+  SemanticUnknownExpectedAssertion,
   VocabularyInput,
 } from '@harmony/semantic-model'
 import { Effect, Schema } from 'effect'
@@ -315,15 +318,20 @@ describe('Domain Semantic Patch Candidate publication workflow', () => {
       const failingRegressionCase = new RegressionCase({
         id: Schema.decodeUnknownSync(RegressionCase.fields.id)('regression-case:patch-publication:failing'),
         artifactKind: 'regression-case',
+        caseRole: 'target_fix',
         patchCandidateId: patchCandidate.id,
         sourceCaseId: patchCandidate.sourceCaseId,
         sourceCorrectionId: patchCandidate.sourceCorrectionId,
         targetPackage: patchCandidate.target.packageRef,
-        assertion: new PackageDefinitionContainsAssertion({
-          assertionKind: 'package_definition_contains',
-          packageId: patchCandidate.target.packageRef.packageId,
-          requiredText: 'text that the deterministic candidate does not publish',
-        }),
+        expectedAssertions: [
+          new PackageDefinitionContainsAssertion({
+            assertionKind: 'package_definition_contains',
+            expectationKind: 'confirmed_success',
+            packageId: patchCandidate.target.packageRef.packageId,
+            requiredText: 'text that the deterministic candidate does not publish',
+            evidenceRefs: patchCandidate.evidenceRefs,
+          }),
+        ],
         rationale: 'Prove failed regression blocks publication.',
         createdAt: '2026-06-24T00:00:00.000Z',
       })
@@ -342,8 +350,15 @@ describe('Domain Semantic Patch Candidate publication workflow', () => {
       assert.strictEqual(failedRegressionBlocked, true)
 
       const regressionCase = yield* publicationWorkflow.createRegressionCase(patchCandidate)
+      const targetAssertion = firstOf(regressionCase.regressionCase.expectedAssertions, 'target expected assertion')
+      assert.strictEqual(regressionCase.regressionCase.caseRole, 'target_fix')
+      assert.strictEqual(targetAssertion.assertionKind, 'package_definition_contains')
+      assert.strictEqual(targetAssertion.expectationKind, 'confirmed_success')
       const passingRun = yield* publicationWorkflow.runRegression(regressionCase.regressionCase, patchCandidate)
       assert.strictEqual(passingRun.regressionRun.outcome, 'passed')
+      assert.strictEqual(passingRun.regressionRun.sourceCaseId, patchCandidate.sourceCaseId)
+      assert.strictEqual(passingRun.regressionRun.oldPackageVersionId, domainPackage.packageVersion.id)
+      assert.notStrictEqual(passingRun.regressionRun.candidatePackageVersionId, domainPackage.packageVersion.id)
       assert.strictEqual(passingRun.patchCandidate.lifecycle, 'proposed')
       assert.strictEqual(passingRun.patchCandidate.state, 'regression_passed')
 
@@ -404,5 +419,166 @@ describe('Domain Semantic Patch Candidate publication workflow', () => {
         allRecords.findIndex(isRegressionRunRecord) < allRecords.findIndex(isPatchCandidatePublishedRecord),
         true,
       )
+    }).pipe(Effect.provide(layerInMemoryWithPatchPublication(basePackageId))))
+
+  it.effect('blocks publication when a candidate fixes its target regression but breaks historical confirmed behavior', () =>
+    Effect.gen(function* () {
+      const publicationWorkflow = yield* SemanticPatchPublicationWorkflow
+      const ledger = yield* SemanticLedger
+      const { domainPackage, patchCandidate } = yield* domainCandidateFixture()
+
+      if (patchCandidate.target.targetKind !== 'semantic_package') {
+        assert.fail('Expected semantic package patch candidate')
+      }
+
+      const targetRegressionCase = yield* publicationWorkflow.createRegressionCase(patchCandidate)
+      const targetRun = yield* publicationWorkflow.runRegression(targetRegressionCase.regressionCase, patchCandidate)
+      assert.strictEqual(targetRun.regressionRun.outcome, 'passed')
+
+      const historicalDefinitionSpan = firstOf(
+        domainPackage.evidenceSource.spans.filter(span => span.text === originalDomainDefinition),
+        'historical definition span',
+      )
+      const historicalEvidence = new EvidenceRef({
+        sourceId: domainPackage.evidenceSource.id,
+        spanId: historicalDefinitionSpan.id,
+      })
+      const historicalCase = new RegressionCase({
+        id: Schema.decodeUnknownSync(RegressionCase.fields.id)(
+          'regression-case:patch-publication:historical-confirmed',
+        ),
+        artifactKind: 'regression-case',
+        caseRole: 'historical_behavior',
+        patchCandidateId: patchCandidate.id,
+        sourceCaseId: Schema.decodeUnknownSync(Case.fields.id)('case:patch-publication:historical-confirmed'),
+        sourceCorrectionId: Schema.decodeUnknownSync(Correction.fields.id)(
+          'correction:patch-publication:historical-confirmed',
+        ),
+        targetPackage: patchCandidate.target.packageRef,
+        expectedAssertions: [
+          new PackageDefinitionEqualsAssertion({
+            assertionKind: 'package_definition_equals',
+            expectationKind: 'confirmed_success',
+            packageId: patchCandidate.target.packageRef.packageId,
+            expectedText: originalDomainDefinition,
+            evidenceRefs: [historicalEvidence],
+          }),
+        ],
+        rationale: 'Historical confirmed behavior expects the original domain definition to remain available.',
+        createdAt: '2026-06-24T00:00:00.000Z',
+      })
+      const recordsBeforeHistoricalCase = yield* ledger.records
+      const historicalCaseRecord = new RegressionCaseCreatedRecord({
+        id: Schema.decodeUnknownSync(RegressionCaseCreatedRecord.fields.id)(
+          `ledger-record:${historicalCase.id}:${recordsBeforeHistoricalCase.length + 1}-regression-case-created`,
+        ),
+        recordKind: 'RegressionCaseCreated',
+        recordedAt: '2026-06-24T00:00:00.000Z',
+        regressionCase: historicalCase,
+      })
+      yield* ledger.append(historicalCaseRecord)
+
+      const suiteRuns = yield* publicationWorkflow.runRegressionSuite(patchCandidate)
+      assert.strictEqual(suiteRuns.length, 2)
+
+      const historicalRun = firstOf(
+        suiteRuns.filter(result => result.regressionCase.id === historicalCase.id),
+        'historical regression run',
+      )
+      assert.strictEqual(historicalRun.regressionCase.caseRole, 'historical_behavior')
+      assert.strictEqual(historicalRun.regressionRun.outcome, 'failed')
+      assert.strictEqual(historicalRun.regressionRun.sourceCaseId, historicalCase.sourceCaseId)
+      assert.strictEqual(historicalRun.regressionRun.sourceCorrectionId, historicalCase.sourceCorrectionId)
+      assert.strictEqual(historicalRun.regressionRun.oldPackageVersionId, domainPackage.packageVersion.id)
+      assert.strictEqual(
+        historicalRun.regressionRun.candidatePackageVersionId,
+        targetRun.regressionRun.candidatePackageVersionId,
+      )
+
+      const historicalAssertionResult = firstOf(
+        historicalRun.regressionRun.assertionResults,
+        'historical assertion result',
+      )
+      assert.strictEqual(historicalAssertionResult.outcome, 'failed')
+      assert.strictEqual(historicalAssertionResult.expectationKind, 'confirmed_success')
+      assert.strictEqual(historicalAssertionResult.expectedAssertion.assertionKind, 'package_definition_equals')
+      assert.strictEqual(historicalAssertionResult.evidenceRefs[0]?.sourceId, domainPackage.evidenceSource.id)
+      assert.strictEqual(historicalAssertionResult.expected, originalDomainDefinition)
+      assert.isTrue(historicalAssertionResult.actual.includes('corrected requests must validate'))
+
+      const blocked = yield* publicationWorkflow.publishCandidate(patchCandidate).pipe(
+        Effect.map(() => false),
+        Effect.catchTag(
+          'PatchPublicationBlocked',
+          error => Effect.succeed(error.expectedOutcome === 'historical_behavior_preserved'),
+        ),
+      )
+      assert.strictEqual(blocked, true)
+
+      const expectationRepresentationCase = new RegressionCase({
+        id: Schema.decodeUnknownSync(RegressionCase.fields.id)(
+          'regression-case:patch-publication:expectation-representation',
+        ),
+        artifactKind: 'regression-case',
+        caseRole: 'historical_behavior',
+        patchCandidateId: patchCandidate.id,
+        sourceCaseId: historicalCase.sourceCaseId,
+        sourceCorrectionId: historicalCase.sourceCorrectionId,
+        targetPackage: patchCandidate.target.packageRef,
+        expectedAssertions: [
+          new RequestClarificationExpectedAssertion({
+            assertionKind: 'request_clarification_expected',
+            expectationKind: 'clarification_expected',
+            reason: 'behavior_changing_action_ambiguity',
+            summary: 'Ambiguous behavior-changing requests must ask for clarification.',
+            evidenceRefs: [historicalEvidence],
+          }),
+          new SemanticUnknownExpectedAssertion({
+            assertionKind: 'semantic_unknown_expected',
+            expectationKind: 'unknown_expected',
+            summary: 'Missing semantic evidence must remain unknown rather than violated.',
+            evidenceRefs: [historicalEvidence],
+          }),
+        ],
+        rationale: 'Schema fixture proving clarification and unknown expectations stay distinct.',
+        createdAt: '2026-06-24T00:00:00.000Z',
+      })
+      const encodedRepresentationCase = yield* Schema.encodeUnknownEffect(RegressionCase)(
+        expectationRepresentationCase,
+      )
+      const decodedRepresentationCase = yield* Schema.decodeUnknownEffect(RegressionCase)(
+        encodedRepresentationCase,
+      )
+      assert.deepStrictEqual(
+        decodedRepresentationCase.expectedAssertions.map(assertion => assertion.expectationKind),
+        ['clarification_expected', 'unknown_expected'],
+      )
+
+      const malformedAssertionCase = {
+        ...expectationRepresentationCase,
+        expectedAssertions: [
+          {
+            assertionKind: 'package_definition_contains',
+            packageId: patchCandidate.target.packageRef.packageId,
+            requiredText: originalDomainDefinition,
+            evidenceRefs: [historicalEvidence],
+          },
+        ],
+      }
+      const malformedAssertionFailed = yield* Schema.decodeUnknownEffect(RegressionCase)(malformedAssertionCase).pipe(
+        Effect.map(() => false),
+        Effect.catch(() => Effect.succeed(true)),
+      )
+      assert.strictEqual(malformedAssertionFailed, true)
+
+      const encodedHistoricalCase = yield* Schema.encodeUnknownEffect(RegressionCase)(historicalRun.regressionCase)
+      yield* Schema.decodeUnknownEffect(RegressionCase)(encodedHistoricalCase)
+      const encodedHistoricalRun = yield* Schema.encodeUnknownEffect(RegressionRun)(historicalRun.regressionRun)
+      yield* Schema.decodeUnknownEffect(RegressionRun)(encodedHistoricalRun)
+
+      const allRecords = yield* ledger.records
+      assert.strictEqual(allRecords.filter(isPatchCandidatePublishedRecord).length, 0)
+      assert.strictEqual(allRecords.filter(isRegressionCaseRecord).length, 2)
+      assert.strictEqual(allRecords.filter(isRegressionRunRecord).length, 3)
     }).pipe(Effect.provide(layerInMemoryWithPatchPublication(basePackageId))))
 })
