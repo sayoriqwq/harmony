@@ -13,9 +13,13 @@ export type SemanticInputIdType = typeof SemanticInputId.Type
 
 export const SourceSpanId = idPattern('source-span').pipe(Schema.brand('SourceSpanId'))
 
+export const DocumentSectionId = idPattern('document-section').pipe(Schema.brand('DocumentSectionId'))
+
 export const EvidenceSourceId = idPattern('evidence-source').pipe(Schema.brand('EvidenceSourceId'))
 
 export const SemanticIrId = idPattern('semantic-ir').pipe(Schema.brand('SemanticIrId'))
+
+export const RelationAssertionId = idPattern('relation-assertion').pipe(Schema.brand('RelationAssertionId'))
 
 export const RequestFrameId = idPattern('request-frame').pipe(Schema.brand('RequestFrameId'))
 
@@ -37,6 +41,12 @@ export const PublishedPackageId = idPattern('published-package').pipe(Schema.bra
 export const PackageVersionId = idPattern('package-version').pipe(Schema.brand('PackageVersionId'))
 
 export const ActiveEnvironmentId = idPattern('active-environment').pipe(Schema.brand('ActiveEnvironmentId'))
+
+export const SemanticRuleId = idPattern('semantic-rule').pipe(Schema.brand('SemanticRuleId'))
+
+export const LintFindingId = idPattern('lint-finding').pipe(Schema.brand('LintFindingId'))
+
+export const LintReportId = idPattern('lint-report').pipe(Schema.brand('LintReportId'))
 
 export const LocalSemanticContextId = idPattern('local-context').pipe(Schema.brand('LocalSemanticContextId'))
 
@@ -72,15 +82,47 @@ export const RequestAction = Schema.Literals(['validate', 'rewrite'])
 
 export const RequestBehavior = Schema.Literals(['review_without_modifying', 'modify_target_content'])
 
-export const ParseDecisionState = Schema.Literals(['requires_clarification'])
+export const DeclaredCompleteness = Schema.Literals(['complete', 'partial', 'unspecified'])
+
+export const RelationPredicate = Schema.Literals(['mentions_required_evidence', 'negates_required_evidence'])
+
+export const AssertionStatus = Schema.Literals(['extracted', 'conflicted', 'unresolved'])
+
+export const ParseDecisionState = Schema.Literals(['parsed', 'parse_uncertain', 'requires_clarification'])
 
 export const ClarificationReason = Schema.Literals(['behavior_changing_action_ambiguity'])
+
+export const LintRuleKind = Schema.Literals(['required_relation'])
+
+export const SemanticLintClassification = Schema.Literals([
+  'parse_uncertainty',
+  'supported',
+  'conflicted',
+  'violated',
+  'unknown',
+])
+
+export const LintFindingReason = Schema.Literals([
+  'parse_uncertain_alias',
+  'required_relation_present',
+  'conflicting_evidence',
+  'missing_required_relation_in_complete_scope',
+  'insufficient_evidence_in_open_scope',
+])
 
 export class SourceSpan extends Schema.Class<SourceSpan>('harmony.semantic-model/SourceSpan')({
   id: SourceSpanId,
   startOffset: Schema.Number,
   endOffset: Schema.Number,
   text: Schema.NonEmptyString,
+}) {}
+
+export class DocumentSection extends Schema.Class<DocumentSection>('harmony.semantic-model/DocumentSection')({
+  id: DocumentSectionId,
+  title: Schema.NonEmptyString,
+  content: Schema.NonEmptyString,
+  declaredCompleteness: DeclaredCompleteness,
+  spans: Schema.Array(SourceSpan),
 }) {}
 
 export class VocabularyInput extends Schema.Class<VocabularyInput>('harmony.semantic-model/VocabularyInput')({
@@ -101,7 +143,16 @@ export class PromptInput extends Schema.Class<PromptInput>('harmony.semantic-mod
   spans: Schema.Array(SourceSpan),
 }) {}
 
-export const SemanticInput = Schema.Union([PromptInput, VocabularyInput])
+export class DocumentInput extends Schema.Class<DocumentInput>('harmony.semantic-model/DocumentInput')({
+  id: SemanticInputId,
+  inputKind: Schema.Literal('document'),
+  content: Schema.NonEmptyString,
+  declaredCompleteness: DeclaredCompleteness,
+  sections: Schema.Array(DocumentSection),
+  spans: Schema.Array(SourceSpan),
+}) {}
+
+export const SemanticInput = Schema.Union([PromptInput, DocumentInput, VocabularyInput])
 export type SemanticInputType = typeof SemanticInput.Type
 
 export class EvidenceRef extends Schema.Class<EvidenceRef>('harmony.semantic-model/EvidenceRef')({
@@ -125,6 +176,18 @@ export class PromptEvidenceSource extends Schema.Class<PromptEvidenceSource>(
   evidenceKind: Schema.Literal('prompt-source'),
   inputRef: SemanticInputId,
   originalText: Schema.NonEmptyString,
+  spans: Schema.Array(SourceSpan),
+  capturedAt: Schema.NonEmptyString,
+}) {}
+
+export class DocumentEvidenceSource extends Schema.Class<DocumentEvidenceSource>(
+  'harmony.semantic-model/DocumentEvidenceSource',
+)({
+  id: EvidenceSourceId,
+  evidenceKind: Schema.Literal('document-source'),
+  inputRef: SemanticInputId,
+  originalText: Schema.NonEmptyString,
+  sections: Schema.Array(DocumentSection),
   spans: Schema.Array(SourceSpan),
   capturedAt: Schema.NonEmptyString,
 }) {}
@@ -357,9 +420,20 @@ export class RequestFrame extends Schema.Class<RequestFrame>('harmony.semantic-m
 export const SemanticFrame = Schema.Union([RequestFrame])
 export type SemanticFrameType = typeof SemanticFrame.Type
 
+export class RelationAssertion extends Schema.Class<RelationAssertion>('harmony.semantic-model/RelationAssertion')({
+  id: RelationAssertionId,
+  sectionId: DocumentSectionId,
+  subject: Schema.NonEmptyString,
+  predicate: RelationPredicate,
+  object: Schema.NonEmptyString,
+  assertionStatus: AssertionStatus,
+  evidenceRefs: Schema.Array(EvidenceRef),
+}) {}
+
 export class UnresolvedSpan extends Schema.Class<UnresolvedSpan>('harmony.semantic-model/UnresolvedSpan')({
   spanId: SourceSpanId,
   reason: Schema.NonEmptyString,
+  evidenceRefs: Schema.Array(EvidenceRef),
 }) {}
 
 export class CompetingInterpretation extends Schema.Class<CompetingInterpretation>(
@@ -377,10 +451,11 @@ export class CompetingInterpretation extends Schema.Class<CompetingInterpretatio
 export class SemanticIr extends Schema.Class<SemanticIr>('harmony.semantic-model/SemanticIr')({
   id: SemanticIrId,
   artifactKind: Schema.Literal('semantic-ir'),
-  inputKind: Schema.Literal('prompt'),
+  inputKind: Schema.Literals(['prompt', 'document']),
   inputRef: SemanticInputId,
   environmentRef: ActiveEnvironmentId,
   frameInstances: Schema.Array(SemanticFrame),
+  relationAssertions: Schema.Array(RelationAssertion),
   competingInterpretations: Schema.Array(CompetingInterpretation),
   unresolvedSpans: Schema.Array(UnresolvedSpan),
   evidenceRefs: Schema.Array(EvidenceRef),
@@ -422,6 +497,53 @@ export class ClarificationDecision extends Schema.Class<ClarificationDecision>(
 export const RequestDecision = Schema.Union([ClarificationDecision])
 export type RequestDecisionType = typeof RequestDecision.Type
 
+export class SemanticRuleRef extends Schema.Class<SemanticRuleRef>('harmony.semantic-model/SemanticRuleRef')({
+  ruleId: SemanticRuleId,
+  ruleKind: LintRuleKind,
+  packageId: PackageId,
+  packageVersionId: PackageVersionId,
+  namespace: Namespace,
+  description: Schema.NonEmptyString,
+}) {}
+
+export class SemanticPackageRef extends Schema.Class<SemanticPackageRef>('harmony.semantic-model/SemanticPackageRef')({
+  packageId: PackageId,
+  packageVersionId: PackageVersionId,
+  namespace: Namespace,
+  role: EnvironmentPackageRole,
+}) {}
+
+export class SemanticLintFinding extends Schema.Class<SemanticLintFinding>(
+  'harmony.semantic-model/SemanticLintFinding',
+)({
+  id: LintFindingId,
+  artifactKind: Schema.Literal('semantic-lint-finding'),
+  classification: SemanticLintClassification,
+  reason: LintFindingReason,
+  semanticIrId: SemanticIrId,
+  environmentRef: ActiveEnvironmentId,
+  inputRef: SemanticInputId,
+  documentSectionId: DocumentSectionId,
+  declaredCompleteness: DeclaredCompleteness,
+  relationAssertionIds: Schema.Array(RelationAssertionId),
+  sourceRefs: Schema.Array(EvidenceRef),
+  ruleRef: SemanticRuleRef,
+  packageRef: SemanticPackageRef,
+  message: Schema.NonEmptyString,
+}) {}
+
+export class SemanticLintReport extends Schema.Class<SemanticLintReport>(
+  'harmony.semantic-model/SemanticLintReport',
+)({
+  id: LintReportId,
+  artifactKind: Schema.Literal('semantic-lint-report'),
+  inputRef: SemanticInputId,
+  semanticIrId: SemanticIrId,
+  environmentRef: ActiveEnvironmentId,
+  findings: Schema.Array(SemanticLintFinding),
+  createdAt: Schema.NonEmptyString,
+}) {}
+
 export class VocabularyCompileResult extends Schema.Class<VocabularyCompileResult>(
   'harmony.semantic-model/VocabularyCompileResult',
 )({
@@ -440,6 +562,13 @@ export class PromptParseResult extends Schema.Class<PromptParseResult>(
   'harmony.semantic-model/PromptParseResult',
 )({
   evidenceSource: PromptEvidenceSource,
+  semanticIr: SemanticIr,
+}) {}
+
+export class DocumentParseResult extends Schema.Class<DocumentParseResult>(
+  'harmony.semantic-model/DocumentParseResult',
+)({
+  evidenceSource: DocumentEvidenceSource,
   semanticIr: SemanticIr,
 }) {}
 
@@ -480,6 +609,15 @@ export class PromptInputCapturedRecord extends Schema.Class<PromptInputCapturedR
   source: PromptEvidenceSource,
 }) {}
 
+export class DocumentInputCapturedRecord extends Schema.Class<DocumentInputCapturedRecord>(
+  'harmony.semantic-model/DocumentInputCapturedRecord',
+)({
+  id: LedgerRecordId,
+  recordKind: Schema.Literal('DocumentInputCaptured'),
+  recordedAt: Schema.NonEmptyString,
+  source: DocumentEvidenceSource,
+}) {}
+
 export class SemanticIrProducedRecord extends Schema.Class<SemanticIrProducedRecord>(
   'harmony.semantic-model/SemanticIrProducedRecord',
 )({
@@ -498,13 +636,24 @@ export class ActiveSemanticEnvironmentConstructedRecord extends Schema.Class<Act
   environment: ActiveSemanticEnvironment,
 }) {}
 
+export class SemanticLintReportProducedRecord extends Schema.Class<SemanticLintReportProducedRecord>(
+  'harmony.semantic-model/SemanticLintReportProducedRecord',
+)({
+  id: LedgerRecordId,
+  recordKind: Schema.Literal('SemanticLintReportProduced'),
+  recordedAt: Schema.NonEmptyString,
+  report: SemanticLintReport,
+}) {}
+
 export const LedgerRecord = Schema.Union([
   VocabularySourceImportedRecord,
   SemanticPackageDraftCompiledRecord,
   PackageVersionPublishedRecord,
   PromptInputCapturedRecord,
+  DocumentInputCapturedRecord,
   SemanticIrProducedRecord,
   ActiveSemanticEnvironmentConstructedRecord,
+  SemanticLintReportProducedRecord,
 ])
 export type LedgerRecordType = typeof LedgerRecord.Type
 
@@ -514,6 +663,15 @@ export class PromptClarificationWorkflowResult extends Schema.Class<PromptClarif
   evidenceSource: PromptEvidenceSource,
   semanticIr: SemanticIr,
   decision: RequestDecision,
+  ledgerRecords: Schema.Array(LedgerRecord),
+}) {}
+
+export class DocumentSemanticLintWorkflowResult extends Schema.Class<DocumentSemanticLintWorkflowResult>(
+  'harmony.semantic-model/DocumentSemanticLintWorkflowResult',
+)({
+  evidenceSource: DocumentEvidenceSource,
+  semanticIr: SemanticIr,
+  report: SemanticLintReport,
   ledgerRecords: Schema.Array(LedgerRecord),
 }) {}
 

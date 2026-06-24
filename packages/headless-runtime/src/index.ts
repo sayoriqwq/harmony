@@ -1,5 +1,6 @@
 import type {
   ActiveEnvironmentBuildRequest,
+  DocumentInput,
   LedgerRecordType as LedgerRecord,
   PackageIdType as PackageId,
   PromptInput,
@@ -20,6 +21,10 @@ import {
   CompileAndPublishResult,
   Concept,
   Definition,
+  DocumentEvidenceSource,
+  DocumentInputCapturedRecord,
+  DocumentParseResult,
+  DocumentSemanticLintWorkflowResult,
   EnvironmentSemanticBinding,
   EvidenceRef,
   EvidenceSource,
@@ -37,6 +42,7 @@ import {
   PromptInputCapturedRecord,
   PromptParseResult,
   PublishedSemanticPackage,
+  RelationAssertion,
   RequestDecision as RequestDecisionSchema,
   RequestFrame,
   RequestTarget,
@@ -44,9 +50,15 @@ import {
   SemanticIr,
   SemanticIrProducedRecord,
   SemanticKernelIdentity,
+  SemanticLintFinding,
+  SemanticLintReport,
+  SemanticLintReportProducedRecord,
   SemanticPackageDraft,
   SemanticPackageDraftCompiledRecord,
+  SemanticPackageRef,
+  SemanticRuleRef,
   Term,
+  UnresolvedSpan,
   VocabularyCompileResult,
   VocabularySourceImportedRecord,
 } from '@harmony/semantic-model'
@@ -59,6 +71,8 @@ const effectVersion = 'effect@4.0.0-beta.83'
 const activeEnvironmentBuilderVersion = 'deterministic-active-environment-builder@0.1.0'
 const promptParserVersion = 'deterministic-prompt-parser@0.1.0'
 const promptDecisionVersion = 'deterministic-request-decision@0.1.0'
+const documentParserVersion = 'deterministic-document-parser@0.1.0'
+const semanticLintVersion = 'deterministic-semantic-lint@0.1.0'
 
 export const defaultSemanticKernelIdentity = new SemanticKernelIdentity({
   id: Schema.decodeUnknownSync(SemanticKernelIdentity.fields.id)('semantic-kernel:harmony-v1'),
@@ -89,8 +103,24 @@ export class PromptParseError extends Schema.TaggedErrorClass<PromptParseError>(
   },
 ) {}
 
+export class DocumentParseError extends Schema.TaggedErrorClass<DocumentParseError>()(
+  'DocumentParseError',
+  {
+    inputId: Schema.String,
+    message: Schema.String,
+  },
+) {}
+
 export class RequestDecisionUnsupported extends Schema.TaggedErrorClass<RequestDecisionUnsupported>()(
   'RequestDecisionUnsupported',
+  {
+    irId: Schema.String,
+    message: Schema.String,
+  },
+) {}
+
+export class SemanticLintUnsupported extends Schema.TaggedErrorClass<SemanticLintUnsupported>()(
+  'SemanticLintUnsupported',
   {
     irId: Schema.String,
     message: Schema.String,
@@ -164,12 +194,46 @@ const firstPromptTargetRef = Effect.fn('firstPromptTargetRef')(
   },
 )
 
-function evidenceRef(source: PromptEvidenceSource, span: SourceSpan) {
+function evidenceRef(source: PromptEvidenceSource | DocumentEvidenceSource, span: SourceSpan) {
   return new EvidenceRef({
     sourceId: source.id,
     spanId: span.id,
   })
 }
+
+const firstSectionSpan = Effect.fn('firstSectionSpan')(
+  function* (
+    input: DocumentInput,
+    section: DocumentInput['sections'][number],
+  ): Effect.fn.Return<SourceSpan, DocumentParseError> {
+    const span = section.spans[0]
+    if (span === undefined) {
+      return yield* new DocumentParseError({
+        inputId: input.id,
+        message: `Document section ${section.id} must carry at least one source span.`,
+      })
+    }
+    return span
+  },
+)
+
+const findSectionSpan = Effect.fn('findSectionSpan')(
+  function* (
+    input: DocumentInput,
+    section: DocumentInput['sections'][number],
+    text: string,
+    label: string,
+  ): Effect.fn.Return<SourceSpan, DocumentParseError> {
+    const exact = section.spans.find(span => span.text === text)
+    if (exact !== undefined) {
+      return exact
+    }
+    return yield* new DocumentParseError({
+      inputId: input.id,
+      message: `Deterministic document fixture is missing ${label} span "${text}".`,
+    })
+  },
+)
 
 function publishArtifacts(artifacts: SemanticPackageDraft['artifacts']): SemanticPackageDraft['artifacts'] {
   return {
@@ -254,6 +318,46 @@ function uniqueEvidenceRefs(items: ReadonlyArray<EvidenceRef>): Array<EvidenceRe
     seen.add(key)
     return true
   })
+}
+
+function evidenceRefsForSection(semanticIr: SemanticIr, section: DocumentInput['sections'][number]) {
+  const spanIds = new Set(section.spans.map(span => span.id))
+  return semanticIr.evidenceRefs.filter(ref => spanIds.has(ref.spanId))
+}
+
+function effectiveCompleteness(input: DocumentInput, section: DocumentInput['sections'][number]) {
+  return section.declaredCompleteness === 'unspecified'
+    ? input.declaredCompleteness
+    : section.declaredCompleteness
+}
+
+function activeDomainLintRules(environment: ActiveSemanticEnvironment) {
+  return environment.semanticBindings
+    .filter(binding => binding.packageRole === 'domain')
+    .filter(binding => binding.definitionText.toLowerCase().includes('prior payment'))
+    .map((binding) => {
+      const ruleRef = new SemanticRuleRef({
+        ruleId: Schema.decodeUnknownSync(SemanticRuleRef.fields.ruleId)(
+          `semantic-rule:${binding.namespace}:requires-prior-payment`,
+        ),
+        ruleKind: 'required_relation',
+        packageId: binding.packageId,
+        packageVersionId: binding.packageVersionId,
+        namespace: binding.namespace,
+        description: 'Complete refund document sections must include prior payment evidence.',
+      })
+      const packageRef = new SemanticPackageRef({
+        packageId: binding.packageId,
+        packageVersionId: binding.packageVersionId,
+        namespace: binding.namespace,
+        role: binding.packageRole,
+      })
+      return {
+        packageRef,
+        requiredObject: 'prior_payment',
+        ruleRef,
+      }
+    })
 }
 
 function packageSourceIds(records: ReadonlyArray<LedgerRecord>, packageId: PackageId) {
@@ -704,6 +808,10 @@ export class SemanticParser extends Context.Service<SemanticParser, {
     input: PromptInput,
     environment: ActiveSemanticEnvironment,
   ) => Effect.Effect<PromptParseResult, PromptParseError | Schema.SchemaError>
+  parseDocument: (
+    input: DocumentInput,
+    environment: ActiveSemanticEnvironment,
+  ) => Effect.Effect<DocumentParseResult, DocumentParseError | Schema.SchemaError>
 }>()('harmony/headless-runtime/SemanticParser') {
   static readonly layerDeterministic = Layer.succeed(
     SemanticParser,
@@ -784,6 +892,7 @@ export class SemanticParser extends Context.Service<SemanticParser, {
           inputRef: input.id,
           environmentRef: environment.id,
           frameInstances: [validateFrame, rewriteFrame],
+          relationAssertions: [],
           competingInterpretations: [validateInterpretation, rewriteInterpretation],
           unresolvedSpans: [],
           evidenceRefs: [actionEvidence, targetEvidence, prohibitedEvidence],
@@ -795,6 +904,96 @@ export class SemanticParser extends Context.Service<SemanticParser, {
         })
 
         return yield* Schema.decodeUnknownEffect(PromptParseResult)(result)
+      }),
+      parseDocument: Effect.fn('SemanticParser.parseDocument')(function* (input, environment) {
+        const evidenceSource = new DocumentEvidenceSource({
+          id: Schema.decodeUnknownSync(DocumentEvidenceSource.fields.id)(
+            `evidence-source:${input.id}:${documentParserVersion}`,
+          ),
+          evidenceKind: 'document-source',
+          inputRef: input.id,
+          originalText: input.content,
+          sections: input.sections,
+          spans: input.spans,
+          capturedAt: deterministicInstant,
+        })
+        const relationAssertions: Array<RelationAssertion> = []
+        const unresolvedSpans: Array<UnresolvedSpan> = []
+        const evidenceRefs: Array<EvidenceRef> = []
+
+        for (const section of input.sections) {
+          const sectionSpan = yield* firstSectionSpan(input, section)
+          const sectionEvidence = evidenceRef(evidenceSource, sectionSpan)
+          evidenceRefs.push(sectionEvidence)
+
+          const hasPositivePriorPayment = section.content.includes('prior payment record')
+          const hasNegativePriorPayment = section.content.includes('no prior payment')
+
+          if (hasPositivePriorPayment) {
+            const span = yield* findSectionSpan(input, section, 'prior payment record', 'prior payment evidence')
+            const assertionEvidence = evidenceRef(evidenceSource, span)
+            evidenceRefs.push(assertionEvidence)
+            relationAssertions.push(new RelationAssertion({
+              id: Schema.decodeUnknownSync(RelationAssertion.fields.id)(
+                `relation-assertion:${input.id}:${section.id}:prior-payment-present`,
+              ),
+              sectionId: section.id,
+              subject: 'refund_section',
+              predicate: 'mentions_required_evidence',
+              object: 'prior_payment',
+              assertionStatus: hasNegativePriorPayment ? 'conflicted' : 'extracted',
+              evidenceRefs: [assertionEvidence],
+            }))
+          }
+
+          if (hasNegativePriorPayment) {
+            const span = yield* findSectionSpan(input, section, 'no prior payment', 'prior payment negation')
+            const assertionEvidence = evidenceRef(evidenceSource, span)
+            evidenceRefs.push(assertionEvidence)
+            relationAssertions.push(new RelationAssertion({
+              id: Schema.decodeUnknownSync(RelationAssertion.fields.id)(
+                `relation-assertion:${input.id}:${section.id}:prior-payment-negated`,
+              ),
+              sectionId: section.id,
+              subject: 'refund_section',
+              predicate: 'negates_required_evidence',
+              object: 'prior_payment',
+              assertionStatus: hasPositivePriorPayment ? 'conflicted' : 'extracted',
+              evidenceRefs: [assertionEvidence],
+            }))
+          }
+
+          if (section.content.includes('receipt may prove payment')) {
+            const span = yield* findSectionSpan(input, section, 'receipt may prove payment', 'uncertain payment alias')
+            const uncertainEvidence = evidenceRef(evidenceSource, span)
+            evidenceRefs.push(uncertainEvidence)
+            unresolvedSpans.push(new UnresolvedSpan({
+              spanId: span.id,
+              reason: 'Potential alias for prior payment evidence needs clarification before conformance is judged.',
+              evidenceRefs: [uncertainEvidence],
+            }))
+          }
+        }
+
+        const semanticIr = new SemanticIr({
+          id: Schema.decodeUnknownSync(SemanticIr.fields.id)(`semantic-ir:${input.id}:${environment.id}`),
+          artifactKind: 'semantic-ir',
+          inputKind: 'document',
+          inputRef: input.id,
+          environmentRef: environment.id,
+          frameInstances: [],
+          relationAssertions,
+          competingInterpretations: [],
+          unresolvedSpans,
+          evidenceRefs: uniqueEvidenceRefs(evidenceRefs),
+          decisionState: unresolvedSpans.length === 0 ? 'parsed' : 'parse_uncertain',
+        })
+        const result = new DocumentParseResult({
+          evidenceSource,
+          semanticIr,
+        })
+
+        return yield* Schema.decodeUnknownEffect(DocumentParseResult)(result)
       }),
     }),
   )
@@ -934,6 +1133,194 @@ export class PromptClarificationWorkflow extends Context.Service<PromptClarifica
   )
 }
 
+export class SemanticLintService extends Context.Service<SemanticLintService, {
+  lintDocument: (
+    input: DocumentInput,
+    semanticIr: SemanticIr,
+    environment: ActiveSemanticEnvironment,
+  ) => Effect.Effect<SemanticLintReport, SemanticLintUnsupported | Schema.SchemaError>
+}>()('harmony/headless-runtime/SemanticLintService') {
+  static readonly layerDeterministic = Layer.succeed(
+    SemanticLintService,
+    SemanticLintService.of({
+      lintDocument: Effect.fn('SemanticLintService.lintDocument')(function* (input, semanticIr, environment) {
+        if (semanticIr.inputKind !== 'document' || semanticIr.inputRef !== input.id) {
+          return yield* new SemanticLintUnsupported({
+            irId: semanticIr.id,
+            message: 'Semantic lint requires a document Semantic IR produced from the supplied DocumentInput.',
+          })
+        }
+
+        const findings: Array<SemanticLintFinding> = []
+        const rules = activeDomainLintRules(environment)
+
+        for (const rule of rules) {
+          for (const section of input.sections) {
+            const declaredCompleteness = effectiveCompleteness(input, section)
+            const relationAssertions = semanticIr.relationAssertions.filter(assertion =>
+              assertion.sectionId === section.id && assertion.object === rule.requiredObject,
+            )
+            const positiveAssertions = relationAssertions.filter(assertion =>
+              assertion.predicate === 'mentions_required_evidence',
+            )
+            const negativeAssertions = relationAssertions.filter(assertion =>
+              assertion.predicate === 'negates_required_evidence',
+            )
+            const unresolved = semanticIr.unresolvedSpans.filter(span =>
+              section.spans.some(sectionSpan => sectionSpan.id === span.spanId),
+            )
+
+            const classification = unresolved.length > 0
+              ? 'parse_uncertainty'
+              : positiveAssertions.length > 0 && negativeAssertions.length > 0
+                ? 'conflicted'
+                : positiveAssertions.length > 0
+                  ? 'supported'
+                  : declaredCompleteness === 'complete'
+                    ? 'violated'
+                    : 'unknown'
+
+            const reason = classification === 'parse_uncertainty'
+              ? 'parse_uncertain_alias'
+              : classification === 'conflicted'
+                ? 'conflicting_evidence'
+                : classification === 'supported'
+                  ? 'required_relation_present'
+                  : classification === 'violated'
+                    ? 'missing_required_relation_in_complete_scope'
+                    : 'insufficient_evidence_in_open_scope'
+
+            const relationAssertionIds = relationAssertions.map(assertion => assertion.id)
+            const sourceRefs = uniqueEvidenceRefs(
+              classification === 'parse_uncertainty'
+                ? unresolved.flatMap(span => span.evidenceRefs)
+                : relationAssertions.length > 0
+                  ? relationAssertions.flatMap(assertion => assertion.evidenceRefs)
+                  : evidenceRefsForSection(semanticIr, section),
+            )
+
+            const message = classification === 'parse_uncertainty'
+              ? 'Potential alias evidence must be clarified before this rule can be judged.'
+              : classification === 'conflicted'
+                ? 'The section both mentions and negates prior payment evidence.'
+                : classification === 'supported'
+                  ? 'The section includes prior payment evidence required by the active domain rule.'
+                  : classification === 'violated'
+                    ? 'The section is declared complete but lacks prior payment evidence required by the active domain rule.'
+                    : 'The section is not declared complete enough to treat missing prior payment evidence as a violation.'
+
+            findings.push(new SemanticLintFinding({
+              id: Schema.decodeUnknownSync(SemanticLintFinding.fields.id)(
+                `lint-finding:${input.id}:${section.id}:${rule.ruleRef.ruleId}:${classification}`,
+              ),
+              artifactKind: 'semantic-lint-finding',
+              classification,
+              reason,
+              semanticIrId: semanticIr.id,
+              environmentRef: environment.id,
+              inputRef: input.id,
+              documentSectionId: section.id,
+              declaredCompleteness,
+              relationAssertionIds,
+              sourceRefs,
+              ruleRef: rule.ruleRef,
+              packageRef: rule.packageRef,
+              message,
+            }))
+          }
+        }
+
+        const report = new SemanticLintReport({
+          id: Schema.decodeUnknownSync(SemanticLintReport.fields.id)(
+            `lint-report:${input.id}:${environment.id}:${semanticLintVersion}`,
+          ),
+          artifactKind: 'semantic-lint-report',
+          inputRef: input.id,
+          semanticIrId: semanticIr.id,
+          environmentRef: environment.id,
+          findings,
+          createdAt: deterministicInstant,
+        })
+
+        return yield* Schema.decodeUnknownEffect(SemanticLintReport)(report)
+      }),
+    }),
+  )
+}
+
+export class DocumentSemanticLintWorkflow extends Context.Service<DocumentSemanticLintWorkflow, {
+  lintDocument: (
+    input: DocumentInput,
+    environment: ActiveSemanticEnvironment,
+  ) => Effect.Effect<
+    DocumentSemanticLintWorkflowResult,
+    DocumentParseError | SemanticLintUnsupported | Schema.SchemaError
+  >
+}>()('harmony/headless-runtime/DocumentSemanticLintWorkflow') {
+  static readonly layer = Layer.effect(
+    DocumentSemanticLintWorkflow,
+    Effect.gen(function* () {
+      const parser = yield* SemanticParser
+      const lintService = yield* SemanticLintService
+      const ledger = yield* SemanticLedger
+
+      const lintDocument = Effect.fn('DocumentSemanticLintWorkflow.lintDocument')(
+        function* (input: DocumentInput, environment: ActiveSemanticEnvironment) {
+          const parseResult = yield* parser.parseDocument(input, environment)
+          const report = yield* lintService.lintDocument(input, parseResult.semanticIr, environment)
+
+          const recordsBeforeCapture = yield* ledger.records
+          const documentRecord = new DocumentInputCapturedRecord({
+            id: Schema.decodeUnknownSync(DocumentInputCapturedRecord.fields.id)(
+              `ledger-record:${input.id}:${recordsBeforeCapture.length + 1}-document-captured`,
+            ),
+            recordKind: 'DocumentInputCaptured',
+            recordedAt: deterministicInstant,
+            source: parseResult.evidenceSource,
+          })
+
+          yield* ledger.append(documentRecord)
+
+          const recordsBeforeIr = yield* ledger.records
+          const irRecord = new SemanticIrProducedRecord({
+            id: Schema.decodeUnknownSync(SemanticIrProducedRecord.fields.id)(
+              `ledger-record:${input.id}:${recordsBeforeIr.length + 1}-semantic-ir-produced`,
+            ),
+            recordKind: 'SemanticIrProduced',
+            recordedAt: deterministicInstant,
+            semanticIr: parseResult.semanticIr,
+          })
+
+          yield* ledger.append(irRecord)
+
+          const recordsBeforeReport = yield* ledger.records
+          const reportRecord = new SemanticLintReportProducedRecord({
+            id: Schema.decodeUnknownSync(SemanticLintReportProducedRecord.fields.id)(
+              `ledger-record:${input.id}:${recordsBeforeReport.length + 1}-semantic-lint-report-produced`,
+            ),
+            recordKind: 'SemanticLintReportProduced',
+            recordedAt: deterministicInstant,
+            report,
+          })
+
+          yield* ledger.append(reportRecord)
+
+          const result = new DocumentSemanticLintWorkflowResult({
+            evidenceSource: parseResult.evidenceSource,
+            semanticIr: parseResult.semanticIr,
+            report,
+            ledgerRecords: yield* ledger.records,
+          })
+
+          return yield* Schema.decodeUnknownEffect(DocumentSemanticLintWorkflowResult)(result)
+        },
+      )
+
+      return DocumentSemanticLintWorkflow.of({ lintDocument })
+    }),
+  )
+}
+
 export function layerInMemoryWithActiveEnvironment(
   basePackageId: PackageId,
   kernelIdentity: SemanticKernelIdentity = defaultSemanticKernelIdentity,
@@ -951,6 +1338,17 @@ export function layerInMemoryWithPromptClarification(
 ) {
   return PromptClarificationWorkflow.layer.pipe(
     Layer.provide(RequestDecisionEngine.layer),
+    Layer.provide(SemanticParser.layerDeterministic),
+    Layer.provideMerge(layerInMemoryWithActiveEnvironment(basePackageId, kernelIdentity)),
+  )
+}
+
+export function layerInMemoryWithDocumentSemanticLint(
+  basePackageId: PackageId,
+  kernelIdentity: SemanticKernelIdentity = defaultSemanticKernelIdentity,
+) {
+  return DocumentSemanticLintWorkflow.layer.pipe(
+    Layer.provide(SemanticLintService.layerDeterministic),
     Layer.provide(SemanticParser.layerDeterministic),
     Layer.provideMerge(layerInMemoryWithActiveEnvironment(basePackageId, kernelIdentity)),
   )
