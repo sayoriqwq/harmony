@@ -2,6 +2,8 @@ import type {
   ActiveEnvironmentBuildRequest,
   CaseIdType as CaseId,
   CaseSemanticEditType as CaseSemanticEdit,
+  CorrectionDiagnosisType as CorrectionDiagnosis,
+  CorrectionDiagnosisGateResultType as CorrectionDiagnosisGateResult,
   CorrectionIdType as CorrectionId,
   DocumentInput,
   LedgerRecordType as LedgerRecord,
@@ -16,6 +18,8 @@ import {
   ActiveEnvironmentProvenance,
   ActiveSemanticEnvironment,
   ActiveSemanticEnvironmentConstructedRecord,
+  BaseSemanticPatchScope,
+  BusinessVersionPatchScope,
   Case,
   CaseOpenedRecord,
   CaseOpenResult,
@@ -31,23 +35,35 @@ import {
   Correction,
   CorrectionCapturedRecord,
   CorrectionCaptureResult,
+  CorrectionDiagnosedRecord,
+  CorrectionDiagnosisEvidence,
+  CorrectionDiagnosisRationale,
+  CorrectionDiagnosis as CorrectionDiagnosisSchema,
+  CorrectionDiagnosisWorkflowResult,
   CorrectionEvidenceSource,
   Definition,
   DocumentEvidenceSource,
   DocumentInputCapturedRecord,
   DocumentParseResult,
   DocumentSemanticLintWorkflowResult,
+  DomainPackageMissingOrWrongDiagnosis,
+  DomainSemanticPatchScope,
   EnvironmentSemanticBinding,
   EvidenceRef,
   EvidenceSource,
   LedgerRecord as LedgerRecordSchema,
   LexicalSense,
+  LocalCorrectionOnlyDiagnosis,
+  NoSemanticPatchCandidateRecord,
+  NoSemanticPatchCandidateResult,
   PackageActivation,
   PackageCurrentView,
   PackageId as PackageIdSchema,
   PackagePublishResult,
+  PackageSelectionPatchScope,
   PackageVersion,
   PackageVersionPublishedRecord,
+  ParserPatchScope,
   ProhibitedAction,
   PromptClarificationWorkflowResult,
   PromptEvidenceSource,
@@ -58,6 +74,8 @@ import {
   RequestDecision as RequestDecisionSchema,
   RequestFrame,
   RequestTarget,
+  RulePatchScope,
+  RuleScopePatchScope,
   RuntimeBindingIdentity,
   SemanticIr,
   SemanticIrProducedRecord,
@@ -68,6 +86,9 @@ import {
   SemanticPackageDraft,
   SemanticPackageDraftCompiledRecord,
   SemanticPackageRef,
+  SemanticPatchCandidate,
+  SemanticPatchCandidateProposalResult,
+  SemanticPatchCandidateProposedRecord,
   SemanticRuleRef,
   SourceSpan,
   Term,
@@ -146,6 +167,14 @@ export class CaseSemanticEditApplicationError extends Schema.TaggedErrorClass<Ca
   {
     caseId: Schema.String,
     editKind: Schema.String,
+    message: Schema.String,
+  },
+) {}
+
+export class CorrectionDiagnosisError extends Schema.TaggedErrorClass<CorrectionDiagnosisError>()(
+  'CorrectionDiagnosisError',
+  {
+    caseId: Schema.String,
     message: Schema.String,
   },
 ) {}
@@ -327,6 +356,12 @@ function isSemanticPackageDraftCompiledRecord(record: LedgerRecord): record is S
   return record.recordKind === 'SemanticPackageDraftCompiled'
 }
 
+function isActiveEnvironmentConstructedRecord(
+  record: LedgerRecord,
+): record is ActiveSemanticEnvironmentConstructedRecord {
+  return record.recordKind === 'ActiveSemanticEnvironmentConstructed'
+}
+
 function unique<A>(items: ReadonlyArray<A>): Array<A> {
   return Array.from(new Set(items))
 }
@@ -341,6 +376,198 @@ function uniqueEvidenceRefs(items: ReadonlyArray<EvidenceRef>): Array<EvidenceRe
     seen.add(key)
     return true
   })
+}
+
+function semanticPackageRefFromActivation(activation: PackageActivation) {
+  return new SemanticPackageRef({
+    packageId: activation.packageId,
+    packageVersionId: activation.packageVersionId,
+    namespace: activation.namespace,
+    role: activation.role,
+  })
+}
+
+const activeEnvironmentForIr = Effect.fn('activeEnvironmentForIr')(
+  function* (
+    records: ReadonlyArray<LedgerRecord>,
+    semanticIr: SemanticIr,
+  ): Effect.fn.Return<ActiveSemanticEnvironment, CorrectionDiagnosisError> {
+    const environment = records
+      .filter(isActiveEnvironmentConstructedRecord)
+      .map(record => record.environment)
+      .find(candidate => candidate.id === semanticIr.environmentRef)
+    if (environment === undefined) {
+      return yield* new CorrectionDiagnosisError({
+        caseId: semanticIr.id,
+        message: 'Correction diagnosis requires the Active Semantic Environment used by the corrected Semantic IR.',
+      })
+    }
+    return environment
+  },
+)
+
+function diagnosisEvidenceForApplication(application: CaseSemanticEditApplicationResult) {
+  const evidenceRefs = uniqueEvidenceRefs([
+    ...application.edit.evidenceRefs,
+    ...application.afterSemanticIr.evidenceRefs,
+  ])
+  return new CorrectionDiagnosisEvidence({
+    caseId: application.case.id,
+    correctionId: application.correction.id,
+    caseSemanticEditId: application.edit.id,
+    beforeIrRef: application.beforeSemanticIr.id,
+    afterIrRef: application.afterSemanticIr.id,
+    evidenceRefs,
+  })
+}
+
+function noPatchResultForDiagnosis(diagnosis: LocalCorrectionOnlyDiagnosis) {
+  return new NoSemanticPatchCandidateResult({
+    id: Schema.decodeUnknownSync(NoSemanticPatchCandidateResult.fields.id)(
+      `correction-diagnosis-result:${diagnosis.id}:no-patch`,
+    ),
+    artifactKind: 'correction-diagnosis-result',
+    resultKind: 'NoSemanticPatchCandidate',
+    diagnosisId: diagnosis.id,
+    caseId: diagnosis.evidence.caseId,
+    correctionId: diagnosis.evidence.correctionId,
+    caseSemanticEditId: diagnosis.evidence.caseSemanticEditId,
+    reason: 'local_correction_only',
+    rationale: diagnosis.rationale,
+    evidenceRefs: diagnosis.evidenceRefs,
+    createdAt: deterministicInstant,
+  })
+}
+
+function candidateProposalForDiagnosis(
+  diagnosis: Exclude<CorrectionDiagnosis, LocalCorrectionOnlyDiagnosis>,
+  candidateKind: SemanticPatchCandidate['candidateKind'],
+  scope: SemanticPatchCandidate['scope'],
+  proposedChangeSummary: string,
+) {
+  const patchCandidate = new SemanticPatchCandidate({
+    id: Schema.decodeUnknownSync(SemanticPatchCandidate.fields.id)(
+      `semantic-patch-candidate:${diagnosis.id}`,
+    ),
+    artifactKind: 'semantic-patch-candidate',
+    candidateKind,
+    lifecycle: 'proposed',
+    state: 'awaiting_regression',
+    sourceCaseId: diagnosis.evidence.caseId,
+    sourceCorrectionId: diagnosis.evidence.correctionId,
+    sourceCaseSemanticEditId: diagnosis.evidence.caseSemanticEditId,
+    sourceDiagnosisId: diagnosis.id,
+    scope,
+    proposedChangeSummary,
+    rationale: diagnosis.rationale,
+    evidenceRefs: diagnosis.evidenceRefs,
+    createdAt: deterministicInstant,
+  })
+  return new SemanticPatchCandidateProposalResult({
+    id: Schema.decodeUnknownSync(SemanticPatchCandidateProposalResult.fields.id)(
+      `correction-diagnosis-result:${diagnosis.id}:candidate`,
+    ),
+    artifactKind: 'correction-diagnosis-result',
+    resultKind: 'SemanticPatchCandidateProposed',
+    diagnosisId: diagnosis.id,
+    caseId: diagnosis.evidence.caseId,
+    correctionId: diagnosis.evidence.correctionId,
+    caseSemanticEditId: diagnosis.evidence.caseSemanticEditId,
+    patchCandidate,
+    rationale: diagnosis.rationale,
+    evidenceRefs: diagnosis.evidenceRefs,
+    createdAt: deterministicInstant,
+  })
+}
+
+function gateResultForDiagnosis(diagnosis: CorrectionDiagnosis): CorrectionDiagnosisGateResult {
+  switch (diagnosis.diagnosisKind) {
+    case 'LocalCorrectionOnly':
+      return noPatchResultForDiagnosis(diagnosis)
+    case 'LocalCaseBindingError':
+      return candidateProposalForDiagnosis(
+        diagnosis,
+        'case_binding_example_patch',
+        new ParserPatchScope({
+          scopeKind: 'parser',
+          environmentRef: diagnosis.targetEnvironmentRef,
+        }),
+        'Add a scoped parser or binding example so this corrected interpretation is reproducible.',
+      )
+    case 'BaseLayerMissingOrWrong':
+      return candidateProposalForDiagnosis(
+        diagnosis,
+        'base_layer_patch',
+        new BaseSemanticPatchScope({
+          scopeKind: 'base',
+          packageRef: diagnosis.targetPackage,
+        }),
+        'Propose a Base Layer semantic package change scoped to the corrected interpretation.',
+      )
+    case 'DomainPackageMissingOrWrong':
+      return candidateProposalForDiagnosis(
+        diagnosis,
+        'domain_package_patch',
+        new DomainSemanticPatchScope({
+          scopeKind: 'domain',
+          packageRef: diagnosis.targetPackage,
+        }),
+        'Propose a Domain Package semantic change scoped to the corrected interpretation.',
+      )
+    case 'PackageSelectionError':
+      return candidateProposalForDiagnosis(
+        diagnosis,
+        'package_selection_patch',
+        new PackageSelectionPatchScope({
+          scopeKind: 'package_selection',
+          environmentRef: diagnosis.targetEnvironmentRef,
+        }),
+        'Propose an environment or package activation policy change for this corrected interpretation.',
+      )
+    case 'ParserNegationScopeConditionError':
+      return candidateProposalForDiagnosis(
+        diagnosis,
+        'parser_policy_patch',
+        new ParserPatchScope({
+          scopeKind: 'parser',
+          environmentRef: diagnosis.targetEnvironmentRef,
+        }),
+        'Propose a parser policy example for negation, scope, or condition handling.',
+      )
+    case 'LintRuleWrong':
+      return candidateProposalForDiagnosis(
+        diagnosis,
+        'lint_rule_patch',
+        new RulePatchScope({
+          scopeKind: 'rule',
+          ruleRef: diagnosis.targetRule,
+        }),
+        'Propose a lint rule change scoped to the diagnosed rule.',
+      )
+    case 'RuleScopeWrong':
+      return candidateProposalForDiagnosis(
+        diagnosis,
+        'rule_scope_patch',
+        new RuleScopePatchScope({
+          scopeKind: 'rule_scope',
+          ruleRef: diagnosis.targetRule,
+        }),
+        'Propose a rule scope change for the diagnosed semantic rule.',
+      )
+    case 'BusinessVersionChanged':
+      return candidateProposalForDiagnosis(
+        diagnosis,
+        'business_version_patch',
+        new BusinessVersionPatchScope({
+          scopeKind: 'version',
+          packageRef: diagnosis.targetPackage,
+        }),
+        'Propose a new package version candidate while preserving the prior version.',
+      )
+  }
+
+  const _exhaustive: never = diagnosis
+  return _exhaustive
 }
 
 const applyCaseSemanticEditToIr = Effect.fn('applyCaseSemanticEditToIr')(
@@ -1440,6 +1667,135 @@ export class CorrectionWorkflow extends Context.Service<CorrectionWorkflow, {
   )
 }
 
+const deterministicDiagnosisForApplication = Effect.fn('deterministicDiagnosisForApplication')(
+  function* (
+    application: CaseSemanticEditApplicationResult,
+    records: ReadonlyArray<LedgerRecord>,
+  ): Effect.fn.Return<CorrectionDiagnosis, CorrectionDiagnosisError | Schema.SchemaError> {
+    const decodedApplication = yield* Schema.decodeUnknownEffect(CaseSemanticEditApplicationResult)(application)
+    const diagnosisEvidence = diagnosisEvidenceForApplication(decodedApplication)
+    const normalizedCorrection = decodedApplication.correction.userText.toLowerCase()
+
+    if (
+      normalizedCorrection.includes('local-only')
+      || normalizedCorrection.includes('local only')
+      || normalizedCorrection.includes('current case only')
+    ) {
+      const rationale = new CorrectionDiagnosisRationale({
+        summary: 'The correction explicitly limits the semantic change to the current Case.',
+        promotionDecision: 'Keep the applied CaseSemanticEdit local and do not propose a long-term Semantic Patch Candidate.',
+      })
+      const diagnosis = new LocalCorrectionOnlyDiagnosis({
+        id: Schema.decodeUnknownSync(LocalCorrectionOnlyDiagnosis.fields.id)(
+          `correction-diagnosis:${decodedApplication.correction.id}:local-only`,
+        ),
+        artifactKind: 'correction-diagnosis',
+        diagnosisKind: 'LocalCorrectionOnly',
+        evidence: diagnosisEvidence,
+        evidenceRefs: diagnosisEvidence.evidenceRefs,
+        rationale,
+      })
+      return yield* Schema.decodeUnknownEffect(CorrectionDiagnosisSchema)(diagnosis)
+    }
+
+    if (normalizedCorrection.includes('domain package') || normalizedCorrection.includes('domain rule')) {
+      const environment = yield* activeEnvironmentForIr(records, decodedApplication.beforeSemanticIr)
+      const domainActivation = environment.enabledDomainPackages[0]
+      if (domainActivation === undefined) {
+        return yield* new CorrectionDiagnosisError({
+          caseId: decodedApplication.case.id,
+          message: 'DomainPackageMissingOrWrong diagnosis requires an explicitly enabled Domain Package.',
+        })
+      }
+
+      const rationale = new CorrectionDiagnosisRationale({
+        summary: 'The correction says the active domain semantics are missing or wrong for this interpretation.',
+        promotionDecision: 'Propose a scoped Domain Package Semantic Patch Candidate, but do not mutate the package.',
+      })
+      const diagnosis = new DomainPackageMissingOrWrongDiagnosis({
+        id: Schema.decodeUnknownSync(DomainPackageMissingOrWrongDiagnosis.fields.id)(
+          `correction-diagnosis:${decodedApplication.correction.id}:domain-package`,
+        ),
+        artifactKind: 'correction-diagnosis',
+        diagnosisKind: 'DomainPackageMissingOrWrong',
+        evidence: diagnosisEvidence,
+        evidenceRefs: diagnosisEvidence.evidenceRefs,
+        rationale,
+        targetPackage: semanticPackageRefFromActivation(domainActivation),
+      })
+      return yield* Schema.decodeUnknownEffect(CorrectionDiagnosisSchema)(diagnosis)
+    }
+
+    return yield* new CorrectionDiagnosisError({
+      caseId: decodedApplication.case.id,
+      message: 'Deterministic diagnosis fixture must declare local-only or domain package cause.',
+    })
+  },
+)
+
+export class CorrectionDiagnosisWorkflow extends Context.Service<CorrectionDiagnosisWorkflow, {
+  diagnoseAndPropose: (
+    application: CaseSemanticEditApplicationResult,
+  ) => Effect.Effect<CorrectionDiagnosisWorkflowResult, CorrectionDiagnosisError | Schema.SchemaError>
+}>()('harmony/headless-runtime/CorrectionDiagnosisWorkflow') {
+  static readonly layer = Layer.effect(
+    CorrectionDiagnosisWorkflow,
+    Effect.gen(function* () {
+      const ledger = yield* SemanticLedger
+
+      const diagnoseAndPropose = Effect.fn('CorrectionDiagnosisWorkflow.diagnoseAndPropose')(
+        function* (application: CaseSemanticEditApplicationResult) {
+          const recordsBeforeDiagnosis = yield* ledger.records
+          const diagnosis = yield* deterministicDiagnosisForApplication(application, recordsBeforeDiagnosis)
+          const diagnosedRecord = new CorrectionDiagnosedRecord({
+            id: Schema.decodeUnknownSync(CorrectionDiagnosedRecord.fields.id)(
+              `ledger-record:${diagnosis.id}:${recordsBeforeDiagnosis.length + 1}-correction-diagnosed`,
+            ),
+            recordKind: 'CorrectionDiagnosed',
+            recordedAt: deterministicInstant,
+            diagnosis,
+          })
+          yield* ledger.append(diagnosedRecord)
+
+          const gateResult = gateResultForDiagnosis(diagnosis)
+          const recordsBeforeGate = yield* ledger.records
+          const gateRecord = gateResult.resultKind === 'NoSemanticPatchCandidate'
+            ? new NoSemanticPatchCandidateRecord({
+                id: Schema.decodeUnknownSync(NoSemanticPatchCandidateRecord.fields.id)(
+                  `ledger-record:${diagnosis.id}:${recordsBeforeGate.length + 1}-no-semantic-patch-candidate`,
+                ),
+                recordKind: 'NoSemanticPatchCandidate',
+                recordedAt: deterministicInstant,
+                result: gateResult,
+              })
+            : new SemanticPatchCandidateProposedRecord({
+                id: Schema.decodeUnknownSync(SemanticPatchCandidateProposedRecord.fields.id)(
+                  `ledger-record:${diagnosis.id}:${recordsBeforeGate.length + 1}-semantic-patch-candidate-proposed`,
+                ),
+                recordKind: 'SemanticPatchCandidateProposed',
+                recordedAt: deterministicInstant,
+                result: gateResult,
+                patchCandidate: gateResult.patchCandidate,
+              })
+          yield* ledger.append(gateRecord)
+
+          return yield* Schema.decodeUnknownEffect(CorrectionDiagnosisWorkflowResult)(
+            new CorrectionDiagnosisWorkflowResult({
+              diagnosis,
+              gateResult,
+              diagnosedRecord,
+              gateRecord,
+              ledgerRecords: yield* ledger.records,
+            }),
+          )
+        },
+      )
+
+      return CorrectionDiagnosisWorkflow.of({ diagnoseAndPropose })
+    }),
+  )
+}
+
 export class SemanticLintService extends Context.Service<SemanticLintService, {
   lintDocument: (
     input: DocumentInput,
@@ -1656,6 +2012,15 @@ export function layerInMemoryWithCorrection(
 ) {
   return CorrectionWorkflow.layer.pipe(
     Layer.provideMerge(layerInMemoryWithPromptClarification(basePackageId, kernelIdentity)),
+  )
+}
+
+export function layerInMemoryWithCorrectionDiagnosis(
+  basePackageId: PackageId,
+  kernelIdentity: SemanticKernelIdentity = defaultSemanticKernelIdentity,
+) {
+  return CorrectionDiagnosisWorkflow.layer.pipe(
+    Layer.provideMerge(layerInMemoryWithCorrection(basePackageId, kernelIdentity)),
   )
 }
 

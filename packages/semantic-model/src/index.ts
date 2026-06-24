@@ -19,6 +19,16 @@ export type CorrectionIdType = typeof CorrectionId.Type
 
 export const CaseSemanticEditId = idPattern('case-semantic-edit').pipe(Schema.brand('CaseSemanticEditId'))
 
+export const CorrectionDiagnosisId = idPattern('correction-diagnosis').pipe(Schema.brand('CorrectionDiagnosisId'))
+
+export const CorrectionDiagnosisResultId = idPattern('correction-diagnosis-result').pipe(
+  Schema.brand('CorrectionDiagnosisResultId'),
+)
+
+export const SemanticPatchCandidateId = idPattern('semantic-patch-candidate').pipe(
+  Schema.brand('SemanticPatchCandidateId'),
+)
+
 export const SourceSpanId = idPattern('source-span').pipe(Schema.brand('SourceSpanId'))
 
 export const DocumentSectionId = idPattern('document-section').pipe(Schema.brand('DocumentSectionId'))
@@ -111,6 +121,21 @@ export const SemanticLintClassification = Schema.Literals([
 ])
 
 export const CaseStatus = Schema.Literals(['opened', 'locally_corrected'])
+
+export const SemanticPatchCandidateLifecycle = Schema.Literals(['proposed'])
+
+export const SemanticPatchCandidateState = Schema.Literals(['awaiting_regression'])
+
+export const SemanticPatchCandidateKind = Schema.Literals([
+  'case_binding_example_patch',
+  'base_layer_patch',
+  'domain_package_patch',
+  'package_selection_patch',
+  'parser_policy_patch',
+  'lint_rule_patch',
+  'rule_scope_patch',
+  'business_version_patch',
+])
 
 export const LintFindingReason = Schema.Literals([
   'parse_uncertain_alias',
@@ -577,6 +602,229 @@ export class SemanticPackageRef extends Schema.Class<SemanticPackageRef>('harmon
   role: EnvironmentPackageRole,
 }) {}
 
+export class CorrectionDiagnosisEvidence extends Schema.Class<CorrectionDiagnosisEvidence>(
+  'harmony.semantic-model/CorrectionDiagnosisEvidence',
+)({
+  caseId: CaseId,
+  correctionId: CorrectionId,
+  caseSemanticEditId: CaseSemanticEditId,
+  beforeIrRef: SemanticIrId,
+  afterIrRef: SemanticIrId,
+  evidenceRefs: Schema.Array(EvidenceRef),
+}) {}
+
+export class CorrectionDiagnosisRationale extends Schema.Class<CorrectionDiagnosisRationale>(
+  'harmony.semantic-model/CorrectionDiagnosisRationale',
+)({
+  summary: Schema.NonEmptyString,
+  promotionDecision: Schema.NonEmptyString,
+}) {}
+
+const CorrectionDiagnosisCommonFields = {
+  id: CorrectionDiagnosisId,
+  artifactKind: Schema.Literal('correction-diagnosis'),
+  evidence: CorrectionDiagnosisEvidence,
+  evidenceRefs: Schema.Array(EvidenceRef),
+  rationale: CorrectionDiagnosisRationale,
+}
+
+export class LocalCaseBindingErrorDiagnosis extends Schema.Class<LocalCaseBindingErrorDiagnosis>(
+  'harmony.semantic-model/LocalCaseBindingErrorDiagnosis',
+)({
+  ...CorrectionDiagnosisCommonFields,
+  diagnosisKind: Schema.Literal('LocalCaseBindingError'),
+  targetEnvironmentRef: ActiveEnvironmentId,
+}) {}
+
+export class BaseLayerMissingOrWrongDiagnosis extends Schema.Class<BaseLayerMissingOrWrongDiagnosis>(
+  'harmony.semantic-model/BaseLayerMissingOrWrongDiagnosis',
+)({
+  ...CorrectionDiagnosisCommonFields,
+  diagnosisKind: Schema.Literal('BaseLayerMissingOrWrong'),
+  targetPackage: SemanticPackageRef,
+}) {}
+
+export class DomainPackageMissingOrWrongDiagnosis extends Schema.Class<DomainPackageMissingOrWrongDiagnosis>(
+  'harmony.semantic-model/DomainPackageMissingOrWrongDiagnosis',
+)({
+  ...CorrectionDiagnosisCommonFields,
+  diagnosisKind: Schema.Literal('DomainPackageMissingOrWrong'),
+  targetPackage: SemanticPackageRef,
+}) {}
+
+export class PackageSelectionErrorDiagnosis extends Schema.Class<PackageSelectionErrorDiagnosis>(
+  'harmony.semantic-model/PackageSelectionErrorDiagnosis',
+)({
+  ...CorrectionDiagnosisCommonFields,
+  diagnosisKind: Schema.Literal('PackageSelectionError'),
+  targetEnvironmentRef: ActiveEnvironmentId,
+}) {}
+
+export class ParserNegationScopeConditionErrorDiagnosis extends Schema.Class<ParserNegationScopeConditionErrorDiagnosis>(
+  'harmony.semantic-model/ParserNegationScopeConditionErrorDiagnosis',
+)({
+  ...CorrectionDiagnosisCommonFields,
+  diagnosisKind: Schema.Literal('ParserNegationScopeConditionError'),
+  targetEnvironmentRef: ActiveEnvironmentId,
+}) {}
+
+export class LintRuleWrongDiagnosis extends Schema.Class<LintRuleWrongDiagnosis>(
+  'harmony.semantic-model/LintRuleWrongDiagnosis',
+)({
+  ...CorrectionDiagnosisCommonFields,
+  diagnosisKind: Schema.Literal('LintRuleWrong'),
+  targetRule: SemanticRuleRef,
+}) {}
+
+export class RuleScopeWrongDiagnosis extends Schema.Class<RuleScopeWrongDiagnosis>(
+  'harmony.semantic-model/RuleScopeWrongDiagnosis',
+)({
+  ...CorrectionDiagnosisCommonFields,
+  diagnosisKind: Schema.Literal('RuleScopeWrong'),
+  targetRule: SemanticRuleRef,
+}) {}
+
+export class BusinessVersionChangedDiagnosis extends Schema.Class<BusinessVersionChangedDiagnosis>(
+  'harmony.semantic-model/BusinessVersionChangedDiagnosis',
+)({
+  ...CorrectionDiagnosisCommonFields,
+  diagnosisKind: Schema.Literal('BusinessVersionChanged'),
+  targetPackage: SemanticPackageRef,
+}) {}
+
+export class LocalCorrectionOnlyDiagnosis extends Schema.Class<LocalCorrectionOnlyDiagnosis>(
+  'harmony.semantic-model/LocalCorrectionOnlyDiagnosis',
+)({
+  ...CorrectionDiagnosisCommonFields,
+  diagnosisKind: Schema.Literal('LocalCorrectionOnly'),
+}) {}
+
+export const CorrectionDiagnosis = Schema.Union([
+  LocalCaseBindingErrorDiagnosis,
+  BaseLayerMissingOrWrongDiagnosis,
+  DomainPackageMissingOrWrongDiagnosis,
+  PackageSelectionErrorDiagnosis,
+  ParserNegationScopeConditionErrorDiagnosis,
+  LintRuleWrongDiagnosis,
+  RuleScopeWrongDiagnosis,
+  BusinessVersionChangedDiagnosis,
+  LocalCorrectionOnlyDiagnosis,
+])
+export type CorrectionDiagnosisType = typeof CorrectionDiagnosis.Type
+
+export class BaseSemanticPatchScope extends Schema.Class<BaseSemanticPatchScope>(
+  'harmony.semantic-model/BaseSemanticPatchScope',
+)({
+  scopeKind: Schema.Literal('base'),
+  packageRef: SemanticPackageRef,
+}) {}
+
+export class DomainSemanticPatchScope extends Schema.Class<DomainSemanticPatchScope>(
+  'harmony.semantic-model/DomainSemanticPatchScope',
+)({
+  scopeKind: Schema.Literal('domain'),
+  packageRef: SemanticPackageRef,
+}) {}
+
+export class PackageSelectionPatchScope extends Schema.Class<PackageSelectionPatchScope>(
+  'harmony.semantic-model/PackageSelectionPatchScope',
+)({
+  scopeKind: Schema.Literal('package_selection'),
+  environmentRef: ActiveEnvironmentId,
+}) {}
+
+export class ParserPatchScope extends Schema.Class<ParserPatchScope>('harmony.semantic-model/ParserPatchScope')({
+  scopeKind: Schema.Literal('parser'),
+  environmentRef: ActiveEnvironmentId,
+}) {}
+
+export class RulePatchScope extends Schema.Class<RulePatchScope>('harmony.semantic-model/RulePatchScope')({
+  scopeKind: Schema.Literal('rule'),
+  ruleRef: SemanticRuleRef,
+}) {}
+
+export class RuleScopePatchScope extends Schema.Class<RuleScopePatchScope>(
+  'harmony.semantic-model/RuleScopePatchScope',
+)({
+  scopeKind: Schema.Literal('rule_scope'),
+  ruleRef: SemanticRuleRef,
+}) {}
+
+export class BusinessVersionPatchScope extends Schema.Class<BusinessVersionPatchScope>(
+  'harmony.semantic-model/BusinessVersionPatchScope',
+)({
+  scopeKind: Schema.Literal('version'),
+  packageRef: SemanticPackageRef,
+}) {}
+
+export const SemanticPatchScope = Schema.Union([
+  BaseSemanticPatchScope,
+  DomainSemanticPatchScope,
+  PackageSelectionPatchScope,
+  ParserPatchScope,
+  RulePatchScope,
+  RuleScopePatchScope,
+  BusinessVersionPatchScope,
+])
+export type SemanticPatchScopeType = typeof SemanticPatchScope.Type
+
+export class SemanticPatchCandidate extends Schema.Class<SemanticPatchCandidate>(
+  'harmony.semantic-model/SemanticPatchCandidate',
+)({
+  id: SemanticPatchCandidateId,
+  artifactKind: Schema.Literal('semantic-patch-candidate'),
+  candidateKind: SemanticPatchCandidateKind,
+  lifecycle: SemanticPatchCandidateLifecycle,
+  state: SemanticPatchCandidateState,
+  sourceCaseId: CaseId,
+  sourceCorrectionId: CorrectionId,
+  sourceCaseSemanticEditId: CaseSemanticEditId,
+  sourceDiagnosisId: CorrectionDiagnosisId,
+  scope: SemanticPatchScope,
+  proposedChangeSummary: Schema.NonEmptyString,
+  rationale: CorrectionDiagnosisRationale,
+  evidenceRefs: Schema.Array(EvidenceRef),
+  createdAt: Schema.NonEmptyString,
+}) {}
+
+export class NoSemanticPatchCandidateResult extends Schema.Class<NoSemanticPatchCandidateResult>(
+  'harmony.semantic-model/NoSemanticPatchCandidateResult',
+)({
+  id: CorrectionDiagnosisResultId,
+  artifactKind: Schema.Literal('correction-diagnosis-result'),
+  resultKind: Schema.Literal('NoSemanticPatchCandidate'),
+  diagnosisId: CorrectionDiagnosisId,
+  caseId: CaseId,
+  correctionId: CorrectionId,
+  caseSemanticEditId: CaseSemanticEditId,
+  reason: Schema.Literal('local_correction_only'),
+  rationale: CorrectionDiagnosisRationale,
+  evidenceRefs: Schema.Array(EvidenceRef),
+  createdAt: Schema.NonEmptyString,
+}) {}
+
+export class SemanticPatchCandidateProposalResult extends Schema.Class<SemanticPatchCandidateProposalResult>(
+  'harmony.semantic-model/SemanticPatchCandidateProposalResult',
+)({
+  id: CorrectionDiagnosisResultId,
+  artifactKind: Schema.Literal('correction-diagnosis-result'),
+  resultKind: Schema.Literal('SemanticPatchCandidateProposed'),
+  diagnosisId: CorrectionDiagnosisId,
+  caseId: CaseId,
+  correctionId: CorrectionId,
+  caseSemanticEditId: CaseSemanticEditId,
+  patchCandidate: SemanticPatchCandidate,
+  rationale: CorrectionDiagnosisRationale,
+  evidenceRefs: Schema.Array(EvidenceRef),
+  createdAt: Schema.NonEmptyString,
+}) {}
+
+export const CorrectionDiagnosisGateResult = Schema.Union([
+  NoSemanticPatchCandidateResult,
+  SemanticPatchCandidateProposalResult,
+])
+export type CorrectionDiagnosisGateResultType = typeof CorrectionDiagnosisGateResult.Type
+
 export class SemanticLintFinding extends Schema.Class<SemanticLintFinding>(
   'harmony.semantic-model/SemanticLintFinding',
 )({
@@ -742,6 +990,34 @@ export class CaseSemanticEditAppliedRecord extends Schema.Class<CaseSemanticEdit
   case: Case,
 }) {}
 
+export class CorrectionDiagnosedRecord extends Schema.Class<CorrectionDiagnosedRecord>(
+  'harmony.semantic-model/CorrectionDiagnosedRecord',
+)({
+  id: LedgerRecordId,
+  recordKind: Schema.Literal('CorrectionDiagnosed'),
+  recordedAt: Schema.NonEmptyString,
+  diagnosis: CorrectionDiagnosis,
+}) {}
+
+export class NoSemanticPatchCandidateRecord extends Schema.Class<NoSemanticPatchCandidateRecord>(
+  'harmony.semantic-model/NoSemanticPatchCandidateRecord',
+)({
+  id: LedgerRecordId,
+  recordKind: Schema.Literal('NoSemanticPatchCandidate'),
+  recordedAt: Schema.NonEmptyString,
+  result: NoSemanticPatchCandidateResult,
+}) {}
+
+export class SemanticPatchCandidateProposedRecord extends Schema.Class<SemanticPatchCandidateProposedRecord>(
+  'harmony.semantic-model/SemanticPatchCandidateProposedRecord',
+)({
+  id: LedgerRecordId,
+  recordKind: Schema.Literal('SemanticPatchCandidateProposed'),
+  recordedAt: Schema.NonEmptyString,
+  result: SemanticPatchCandidateProposalResult,
+  patchCandidate: SemanticPatchCandidate,
+}) {}
+
 export const LedgerRecord = Schema.Union([
   VocabularySourceImportedRecord,
   SemanticPackageDraftCompiledRecord,
@@ -754,6 +1030,9 @@ export const LedgerRecord = Schema.Union([
   ActiveSemanticEnvironmentConstructedRecord,
   SemanticLintReportProducedRecord,
   CaseSemanticEditAppliedRecord,
+  CorrectionDiagnosedRecord,
+  NoSemanticPatchCandidateRecord,
+  SemanticPatchCandidateProposedRecord,
 ])
 export type LedgerRecordType = typeof LedgerRecord.Type
 
@@ -832,5 +1111,15 @@ export class CaseSemanticEditApplicationResult extends Schema.Class<CaseSemantic
   beforeSemanticIr: SemanticIr,
   afterSemanticIr: SemanticIr,
   appliedRecord: CaseSemanticEditAppliedRecord,
+  ledgerRecords: Schema.Array(LedgerRecord),
+}) {}
+
+export class CorrectionDiagnosisWorkflowResult extends Schema.Class<CorrectionDiagnosisWorkflowResult>(
+  'harmony.semantic-model/CorrectionDiagnosisWorkflowResult',
+)({
+  diagnosis: CorrectionDiagnosis,
+  gateResult: CorrectionDiagnosisGateResult,
+  diagnosedRecord: CorrectionDiagnosedRecord,
+  gateRecord: Schema.Union([NoSemanticPatchCandidateRecord, SemanticPatchCandidateProposedRecord]),
   ledgerRecords: Schema.Array(LedgerRecord),
 }) {}
