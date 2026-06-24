@@ -8,9 +8,24 @@ function idPattern(prefix: string) {
 
 export const VocabularyInputId = idPattern('vocabulary-input').pipe(Schema.brand('VocabularyInputId'))
 
+export const SemanticInputId = idPattern('semantic-input').pipe(Schema.brand('SemanticInputId'))
+export type SemanticInputIdType = typeof SemanticInputId.Type
+
 export const SourceSpanId = idPattern('source-span').pipe(Schema.brand('SourceSpanId'))
 
 export const EvidenceSourceId = idPattern('evidence-source').pipe(Schema.brand('EvidenceSourceId'))
+
+export const SemanticIrId = idPattern('semantic-ir').pipe(Schema.brand('SemanticIrId'))
+
+export const RequestFrameId = idPattern('request-frame').pipe(Schema.brand('RequestFrameId'))
+
+export const CompetingInterpretationId = idPattern('competing-interpretation').pipe(
+  Schema.brand('CompetingInterpretationId'),
+)
+
+export const ClarificationDecisionId = idPattern('clarification-decision').pipe(
+  Schema.brand('ClarificationDecisionId'),
+)
 
 export const PackageId = idPattern('package').pipe(Schema.brand('PackageId'))
 export type PackageIdType = typeof PackageId.Type
@@ -51,6 +66,16 @@ export const EnvironmentPackageRole = Schema.Literals(['base', 'domain'])
 
 export const PackageActivationReason = Schema.Literals(['default_base_layer', 'explicit_domain_toggle'])
 
+export const PromptRole = Schema.Literals(['user_request'])
+
+export const RequestAction = Schema.Literals(['validate', 'rewrite'])
+
+export const RequestBehavior = Schema.Literals(['review_without_modifying', 'modify_target_content'])
+
+export const ParseDecisionState = Schema.Literals(['requires_clarification'])
+
+export const ClarificationReason = Schema.Literals(['behavior_changing_action_ambiguity'])
+
 export class SourceSpan extends Schema.Class<SourceSpan>('harmony.semantic-model/SourceSpan')({
   id: SourceSpanId,
   startOffset: Schema.Number,
@@ -67,6 +92,18 @@ export class VocabularyInput extends Schema.Class<VocabularyInput>('harmony.sema
   spans: Schema.Array(SourceSpan),
 }) {}
 
+export class PromptInput extends Schema.Class<PromptInput>('harmony.semantic-model/PromptInput')({
+  id: SemanticInputId,
+  inputKind: Schema.Literal('prompt'),
+  content: Schema.NonEmptyString,
+  promptRole: PromptRole,
+  targetRefs: Schema.Array(SemanticInputId),
+  spans: Schema.Array(SourceSpan),
+}) {}
+
+export const SemanticInput = Schema.Union([PromptInput, VocabularyInput])
+export type SemanticInputType = typeof SemanticInput.Type
+
 export class EvidenceRef extends Schema.Class<EvidenceRef>('harmony.semantic-model/EvidenceRef')({
   sourceId: EvidenceSourceId,
   spanId: SourceSpanId,
@@ -76,6 +113,17 @@ export class EvidenceSource extends Schema.Class<EvidenceSource>('harmony.semant
   id: EvidenceSourceId,
   evidenceKind: Schema.Literal('vocabulary-source'),
   inputRef: VocabularyInputId,
+  originalText: Schema.NonEmptyString,
+  spans: Schema.Array(SourceSpan),
+  capturedAt: Schema.NonEmptyString,
+}) {}
+
+export class PromptEvidenceSource extends Schema.Class<PromptEvidenceSource>(
+  'harmony.semantic-model/PromptEvidenceSource',
+)({
+  id: EvidenceSourceId,
+  evidenceKind: Schema.Literal('prompt-source'),
+  inputRef: SemanticInputId,
   originalText: Schema.NonEmptyString,
   spans: Schema.Array(SourceSpan),
   capturedAt: Schema.NonEmptyString,
@@ -282,6 +330,98 @@ export class ActiveEnvironmentBuildRequest extends Schema.Class<ActiveEnvironmen
   enabledDomainPackageIds: Schema.Array(PackageId),
 }) {}
 
+export class RequestTarget extends Schema.Class<RequestTarget>('harmony.semantic-model/RequestTarget')({
+  targetKind: Schema.Literal('referenced_document'),
+  targetRef: SemanticInputId,
+  evidenceRefs: Schema.Array(EvidenceRef),
+}) {}
+
+export class ProhibitedAction extends Schema.Class<ProhibitedAction>(
+  'harmony.semantic-model/ProhibitedAction',
+)({
+  action: RequestAction,
+  evidenceRefs: Schema.Array(EvidenceRef),
+}) {}
+
+export class RequestFrame extends Schema.Class<RequestFrame>('harmony.semantic-model/RequestFrame')({
+  id: RequestFrameId,
+  frameKind: Schema.Literal('request'),
+  action: RequestAction,
+  target: RequestTarget,
+  prohibitedActions: Schema.Array(ProhibitedAction),
+  actionEvidenceRefs: Schema.Array(EvidenceRef),
+  targetEvidenceRefs: Schema.Array(EvidenceRef),
+  prohibitedActionEvidenceRefs: Schema.Array(EvidenceRef),
+}) {}
+
+export const SemanticFrame = Schema.Union([RequestFrame])
+export type SemanticFrameType = typeof SemanticFrame.Type
+
+export class UnresolvedSpan extends Schema.Class<UnresolvedSpan>('harmony.semantic-model/UnresolvedSpan')({
+  spanId: SourceSpanId,
+  reason: Schema.NonEmptyString,
+}) {}
+
+export class CompetingInterpretation extends Schema.Class<CompetingInterpretation>(
+  'harmony.semantic-model/CompetingInterpretation',
+)({
+  id: CompetingInterpretationId,
+  interpretationKind: Schema.Literal('request-frame'),
+  frameId: RequestFrameId,
+  action: RequestAction,
+  behavior: RequestBehavior,
+  summary: Schema.NonEmptyString,
+  evidenceRefs: Schema.Array(EvidenceRef),
+}) {}
+
+export class SemanticIr extends Schema.Class<SemanticIr>('harmony.semantic-model/SemanticIr')({
+  id: SemanticIrId,
+  artifactKind: Schema.Literal('semantic-ir'),
+  inputKind: Schema.Literal('prompt'),
+  inputRef: SemanticInputId,
+  environmentRef: ActiveEnvironmentId,
+  frameInstances: Schema.Array(SemanticFrame),
+  competingInterpretations: Schema.Array(CompetingInterpretation),
+  unresolvedSpans: Schema.Array(UnresolvedSpan),
+  evidenceRefs: Schema.Array(EvidenceRef),
+  decisionState: ParseDecisionState,
+}) {}
+
+export class ClarificationOption extends Schema.Class<ClarificationOption>(
+  'harmony.semantic-model/ClarificationOption',
+)({
+  interpretationId: CompetingInterpretationId,
+  frameId: RequestFrameId,
+  action: RequestAction,
+  behavior: RequestBehavior,
+  outcome: Schema.NonEmptyString,
+}) {}
+
+export class ClarificationSemanticDifference extends Schema.Class<ClarificationSemanticDifference>(
+  'harmony.semantic-model/ClarificationSemanticDifference',
+)({
+  differenceKind: Schema.Literal('request_action'),
+  options: Schema.Array(ClarificationOption),
+  prohibitedActionEvidenceRefs: Schema.Array(EvidenceRef),
+}) {}
+
+export class ClarificationDecision extends Schema.Class<ClarificationDecision>(
+  'harmony.semantic-model/ClarificationDecision',
+)({
+  id: ClarificationDecisionId,
+  decisionKind: Schema.Literal('clarify'),
+  reason: ClarificationReason,
+  irId: SemanticIrId,
+  promptInputRef: SemanticInputId,
+  competingInterpretationIds: Schema.Array(CompetingInterpretationId),
+  semanticDifference: ClarificationSemanticDifference,
+  requiredUserResolution: Schema.NonEmptyString,
+  evidenceRefs: Schema.Array(EvidenceRef),
+}) {}
+
+export const RequestDecision = Schema.Union([ClarificationDecision])
+export type RequestDecisionType = typeof RequestDecision.Type
+
 export class VocabularyCompileResult extends Schema.Class<VocabularyCompileResult>(
   'harmony.semantic-model/VocabularyCompileResult',
 )({
@@ -294,6 +434,13 @@ export class PackagePublishResult extends Schema.Class<PackagePublishResult>(
 )({
   publishedPackage: PublishedSemanticPackage,
   packageVersion: PackageVersion,
+}) {}
+
+export class PromptParseResult extends Schema.Class<PromptParseResult>(
+  'harmony.semantic-model/PromptParseResult',
+)({
+  evidenceSource: PromptEvidenceSource,
+  semanticIr: SemanticIr,
 }) {}
 
 export class VocabularySourceImportedRecord extends Schema.Class<VocabularySourceImportedRecord>(
@@ -324,6 +471,24 @@ export class PackageVersionPublishedRecord extends Schema.Class<PackageVersionPu
   packageVersion: PackageVersion,
 }) {}
 
+export class PromptInputCapturedRecord extends Schema.Class<PromptInputCapturedRecord>(
+  'harmony.semantic-model/PromptInputCapturedRecord',
+)({
+  id: LedgerRecordId,
+  recordKind: Schema.Literal('PromptInputCaptured'),
+  recordedAt: Schema.NonEmptyString,
+  source: PromptEvidenceSource,
+}) {}
+
+export class SemanticIrProducedRecord extends Schema.Class<SemanticIrProducedRecord>(
+  'harmony.semantic-model/SemanticIrProducedRecord',
+)({
+  id: LedgerRecordId,
+  recordKind: Schema.Literal('SemanticIrProduced'),
+  recordedAt: Schema.NonEmptyString,
+  semanticIr: SemanticIr,
+}) {}
+
 export class ActiveSemanticEnvironmentConstructedRecord extends Schema.Class<ActiveSemanticEnvironmentConstructedRecord>(
   'harmony.semantic-model/ActiveSemanticEnvironmentConstructedRecord',
 )({
@@ -337,9 +502,20 @@ export const LedgerRecord = Schema.Union([
   VocabularySourceImportedRecord,
   SemanticPackageDraftCompiledRecord,
   PackageVersionPublishedRecord,
+  PromptInputCapturedRecord,
+  SemanticIrProducedRecord,
   ActiveSemanticEnvironmentConstructedRecord,
 ])
 export type LedgerRecordType = typeof LedgerRecord.Type
+
+export class PromptClarificationWorkflowResult extends Schema.Class<PromptClarificationWorkflowResult>(
+  'harmony.semantic-model/PromptClarificationWorkflowResult',
+)({
+  evidenceSource: PromptEvidenceSource,
+  semanticIr: SemanticIr,
+  decision: RequestDecision,
+  ledgerRecords: Schema.Array(LedgerRecord),
+}) {}
 
 export class PackageCurrentView extends Schema.Class<PackageCurrentView>(
   'harmony.semantic-model/PackageCurrentView',

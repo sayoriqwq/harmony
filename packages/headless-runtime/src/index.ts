@@ -2,6 +2,9 @@ import type {
   ActiveEnvironmentBuildRequest,
   LedgerRecordType as LedgerRecord,
   PackageIdType as PackageId,
+  PromptInput,
+  RequestDecisionType as RequestDecision,
+  SemanticInputIdType as SemanticInputId,
   SourceSpan,
   VocabularyInput,
 } from '@harmony/semantic-model'
@@ -10,6 +13,10 @@ import {
   ActiveEnvironmentProvenance,
   ActiveSemanticEnvironment,
   ActiveSemanticEnvironmentConstructedRecord,
+  ClarificationDecision,
+  ClarificationOption,
+  ClarificationSemanticDifference,
+  CompetingInterpretation,
   CompileAndPublishResult,
   Concept,
   Definition,
@@ -24,8 +31,18 @@ import {
   PackagePublishResult,
   PackageVersion,
   PackageVersionPublishedRecord,
+  ProhibitedAction,
+  PromptClarificationWorkflowResult,
+  PromptEvidenceSource,
+  PromptInputCapturedRecord,
+  PromptParseResult,
   PublishedSemanticPackage,
+  RequestDecision as RequestDecisionSchema,
+  RequestFrame,
+  RequestTarget,
   RuntimeBindingIdentity,
+  SemanticIr,
+  SemanticIrProducedRecord,
   SemanticKernelIdentity,
   SemanticPackageDraft,
   SemanticPackageDraftCompiledRecord,
@@ -40,6 +57,8 @@ const compilerVersion = 'deterministic-glossary-compiler@0.1.0'
 const publisherVersion = 'deterministic-package-publisher@0.1.0'
 const effectVersion = 'effect@4.0.0-beta.83'
 const activeEnvironmentBuilderVersion = 'deterministic-active-environment-builder@0.1.0'
+const promptParserVersion = 'deterministic-prompt-parser@0.1.0'
+const promptDecisionVersion = 'deterministic-request-decision@0.1.0'
 
 export const defaultSemanticKernelIdentity = new SemanticKernelIdentity({
   id: Schema.decodeUnknownSync(SemanticKernelIdentity.fields.id)('semantic-kernel:harmony-v1'),
@@ -59,6 +78,22 @@ export class LedgerViewNotFound extends Schema.TaggedErrorClass<LedgerViewNotFou
   'LedgerViewNotFound',
   {
     packageId: Schema.String,
+  },
+) {}
+
+export class PromptParseError extends Schema.TaggedErrorClass<PromptParseError>()(
+  'PromptParseError',
+  {
+    inputId: Schema.String,
+    message: Schema.String,
+  },
+) {}
+
+export class RequestDecisionUnsupported extends Schema.TaggedErrorClass<RequestDecisionUnsupported>()(
+  'RequestDecisionUnsupported',
+  {
+    irId: Schema.String,
+    message: Schema.String,
   },
 ) {}
 
@@ -102,6 +137,39 @@ const findSpan = Effect.fn('findSpan')(
     return first
   },
 )
+
+const findPromptSpan = Effect.fn('findPromptSpan')(
+  function* (input: PromptInput, text: string, label: string): Effect.fn.Return<SourceSpan, PromptParseError> {
+    const exact = input.spans.find(span => span.text === text)
+    if (exact !== undefined) {
+      return exact
+    }
+    return yield* new PromptParseError({
+      inputId: input.id,
+      message: `Deterministic prompt fixture is missing ${label} span "${text}".`,
+    })
+  },
+)
+
+const firstPromptTargetRef = Effect.fn('firstPromptTargetRef')(
+  function* (input: PromptInput): Effect.fn.Return<SemanticInputId, PromptParseError> {
+    const targetRef = input.targetRefs[0]
+    if (targetRef === undefined) {
+      return yield* new PromptParseError({
+        inputId: input.id,
+        message: 'PromptInput must include a target document reference.',
+      })
+    }
+    return targetRef
+  },
+)
+
+function evidenceRef(source: PromptEvidenceSource, span: SourceSpan) {
+  return new EvidenceRef({
+    sourceId: source.id,
+    spanId: span.id,
+  })
+}
 
 function publishArtifacts(artifacts: SemanticPackageDraft['artifacts']): SemanticPackageDraft['artifacts'] {
   return {
@@ -174,6 +242,18 @@ function isSemanticPackageDraftCompiledRecord(record: LedgerRecord): record is S
 
 function unique<A>(items: ReadonlyArray<A>): Array<A> {
   return Array.from(new Set(items))
+}
+
+function uniqueEvidenceRefs(items: ReadonlyArray<EvidenceRef>): Array<EvidenceRef> {
+  const seen = new Set<string>()
+  return items.filter((item) => {
+    const key = `${item.sourceId}:${item.spanId}`
+    if (seen.has(key)) {
+      return false
+    }
+    seen.add(key)
+    return true
+  })
 }
 
 function packageSourceIds(records: ReadonlyArray<LedgerRecord>, packageId: PackageId) {
@@ -619,6 +699,241 @@ export class ActiveEnvironmentBuilder extends Context.Service<ActiveEnvironmentB
   )
 }
 
+export class SemanticParser extends Context.Service<SemanticParser, {
+  parsePrompt: (
+    input: PromptInput,
+    environment: ActiveSemanticEnvironment,
+  ) => Effect.Effect<PromptParseResult, PromptParseError | Schema.SchemaError>
+}>()('harmony/headless-runtime/SemanticParser') {
+  static readonly layerDeterministic = Layer.succeed(
+    SemanticParser,
+    SemanticParser.of({
+      parsePrompt: Effect.fn('SemanticParser.parsePrompt')(function* (input, environment) {
+        const actionSpan = yield* findPromptSpan(input, 'check', 'action cue')
+        const targetSpan = yield* findPromptSpan(input, 'this document', 'target cue')
+        const prohibitedSpan = yield* findPromptSpan(input, 'do not edit it', 'prohibited action cue')
+        const targetRef = yield* firstPromptTargetRef(input)
+        const evidenceSource = new PromptEvidenceSource({
+          id: Schema.decodeUnknownSync(PromptEvidenceSource.fields.id)(
+            `evidence-source:${input.id}:${promptParserVersion}`,
+          ),
+          evidenceKind: 'prompt-source',
+          inputRef: input.id,
+          originalText: input.content,
+          spans: input.spans,
+          capturedAt: deterministicInstant,
+        })
+        const actionEvidence = evidenceRef(evidenceSource, actionSpan)
+        const targetEvidence = evidenceRef(evidenceSource, targetSpan)
+        const prohibitedEvidence = evidenceRef(evidenceSource, prohibitedSpan)
+        const target = new RequestTarget({
+          targetKind: 'referenced_document',
+          targetRef,
+          evidenceRefs: [targetEvidence],
+        })
+        const prohibitedRewrite = new ProhibitedAction({
+          action: 'rewrite',
+          evidenceRefs: [prohibitedEvidence],
+        })
+        const validateFrame = new RequestFrame({
+          id: Schema.decodeUnknownSync(RequestFrame.fields.id)(`request-frame:${input.id}:validate`),
+          frameKind: 'request',
+          action: 'validate',
+          target,
+          prohibitedActions: [prohibitedRewrite],
+          actionEvidenceRefs: [actionEvidence],
+          targetEvidenceRefs: [targetEvidence],
+          prohibitedActionEvidenceRefs: [prohibitedEvidence],
+        })
+        const rewriteFrame = new RequestFrame({
+          id: Schema.decodeUnknownSync(RequestFrame.fields.id)(`request-frame:${input.id}:rewrite`),
+          frameKind: 'request',
+          action: 'rewrite',
+          target,
+          prohibitedActions: [prohibitedRewrite],
+          actionEvidenceRefs: [actionEvidence],
+          targetEvidenceRefs: [targetEvidence],
+          prohibitedActionEvidenceRefs: [prohibitedEvidence],
+        })
+        const validateInterpretation = new CompetingInterpretation({
+          id: Schema.decodeUnknownSync(CompetingInterpretation.fields.id)(
+            `competing-interpretation:${input.id}:validate`,
+          ),
+          interpretationKind: 'request-frame',
+          frameId: validateFrame.id,
+          action: 'validate',
+          behavior: 'review_without_modifying',
+          summary: 'Interpret "check" as validate/review the referenced document without modifying it.',
+          evidenceRefs: [actionEvidence, targetEvidence, prohibitedEvidence],
+        })
+        const rewriteInterpretation = new CompetingInterpretation({
+          id: Schema.decodeUnknownSync(CompetingInterpretation.fields.id)(
+            `competing-interpretation:${input.id}:rewrite`,
+          ),
+          interpretationKind: 'request-frame',
+          frameId: rewriteFrame.id,
+          action: 'rewrite',
+          behavior: 'modify_target_content',
+          summary: 'Interpret "check" as rewrite/modify the referenced document, which conflicts with the prohibition.',
+          evidenceRefs: [actionEvidence, targetEvidence, prohibitedEvidence],
+        })
+        const semanticIr = new SemanticIr({
+          id: Schema.decodeUnknownSync(SemanticIr.fields.id)(`semantic-ir:${input.id}:${environment.id}`),
+          artifactKind: 'semantic-ir',
+          inputKind: 'prompt',
+          inputRef: input.id,
+          environmentRef: environment.id,
+          frameInstances: [validateFrame, rewriteFrame],
+          competingInterpretations: [validateInterpretation, rewriteInterpretation],
+          unresolvedSpans: [],
+          evidenceRefs: [actionEvidence, targetEvidence, prohibitedEvidence],
+          decisionState: 'requires_clarification',
+        })
+        const result = new PromptParseResult({
+          evidenceSource,
+          semanticIr,
+        })
+
+        return yield* Schema.decodeUnknownEffect(PromptParseResult)(result)
+      }),
+    }),
+  )
+}
+
+export class RequestDecisionEngine extends Context.Service<RequestDecisionEngine, {
+  decideRequest: (
+    semanticIr: SemanticIr,
+  ) => Effect.Effect<RequestDecision, RequestDecisionUnsupported | Schema.SchemaError>
+}>()('harmony/headless-runtime/RequestDecisionEngine') {
+  static readonly layer = Layer.succeed(
+    RequestDecisionEngine,
+    RequestDecisionEngine.of({
+      decideRequest: Effect.fn('RequestDecisionEngine.decideRequest')(function* (semanticIr) {
+        const requestFrames = semanticIr.frameInstances.filter(frame => frame.frameKind === 'request')
+        const hasValidate = requestFrames.some(frame => frame.action === 'validate')
+        const hasRewrite = requestFrames.some(frame => frame.action === 'rewrite')
+        const rewriteProhibited = requestFrames.some(frame =>
+          frame.prohibitedActions.some(action => action.action === 'rewrite'),
+        )
+
+        if (!hasValidate || !hasRewrite || !rewriteProhibited) {
+          return yield* new RequestDecisionUnsupported({
+            irId: semanticIr.id,
+            message: 'Expected competing validate and rewrite request frames with rewrite prohibited.',
+          })
+        }
+
+        const interpretations = semanticIr.competingInterpretations.filter(interpretation =>
+          requestFrames.some(frame => frame.id === interpretation.frameId),
+        )
+        if (interpretations.length < 2) {
+          return yield* new RequestDecisionUnsupported({
+            irId: semanticIr.id,
+            message: 'Expected at least two competing request interpretations.',
+          })
+        }
+
+        const prohibitedActionEvidenceRefs = uniqueEvidenceRefs(
+          requestFrames.flatMap(frame => frame.prohibitedActionEvidenceRefs),
+        )
+        const evidenceRefs = uniqueEvidenceRefs([
+          ...semanticIr.evidenceRefs,
+          ...interpretations.flatMap(interpretation => interpretation.evidenceRefs),
+        ])
+        const decision = new ClarificationDecision({
+          id: Schema.decodeUnknownSync(ClarificationDecision.fields.id)(
+            `clarification-decision:${semanticIr.id}:${promptDecisionVersion}`,
+          ),
+          decisionKind: 'clarify',
+          reason: 'behavior_changing_action_ambiguity',
+          irId: semanticIr.id,
+          promptInputRef: semanticIr.inputRef,
+          competingInterpretationIds: interpretations.map(interpretation => interpretation.id),
+          semanticDifference: new ClarificationSemanticDifference({
+            differenceKind: 'request_action',
+            options: interpretations.map(interpretation =>
+              new ClarificationOption({
+                interpretationId: interpretation.id,
+                frameId: interpretation.frameId,
+                action: interpretation.action,
+                behavior: interpretation.behavior,
+                outcome: interpretation.action === 'validate'
+                  ? 'Review or validate the target document without changing its content.'
+                  : 'Rewrite or modify the target document content.',
+              })),
+            prohibitedActionEvidenceRefs,
+          }),
+          requiredUserResolution:
+            'Choose whether "check" means validate/review only, or whether rewrite/modify is authorized despite the prohibition.',
+          evidenceRefs,
+        })
+
+        return yield* Schema.decodeUnknownEffect(RequestDecisionSchema)(decision)
+      }),
+    }),
+  )
+}
+
+export class PromptClarificationWorkflow extends Context.Service<PromptClarificationWorkflow, {
+  clarifyPrompt: (
+    input: PromptInput,
+    environment: ActiveSemanticEnvironment,
+  ) => Effect.Effect<
+    PromptClarificationWorkflowResult,
+    PromptParseError | RequestDecisionUnsupported | Schema.SchemaError
+  >
+}>()('harmony/headless-runtime/PromptClarificationWorkflow') {
+  static readonly layer = Layer.effect(
+    PromptClarificationWorkflow,
+    Effect.gen(function* () {
+      const parser = yield* SemanticParser
+      const decisionEngine = yield* RequestDecisionEngine
+      const ledger = yield* SemanticLedger
+
+      const clarifyPrompt = Effect.fn('PromptClarificationWorkflow.clarifyPrompt')(
+        function* (input: PromptInput, environment: ActiveSemanticEnvironment) {
+          const parseResult = yield* parser.parsePrompt(input, environment)
+          const decision = yield* decisionEngine.decideRequest(parseResult.semanticIr)
+          const recordsBeforeCapture = yield* ledger.records
+          const promptRecord = new PromptInputCapturedRecord({
+            id: Schema.decodeUnknownSync(PromptInputCapturedRecord.fields.id)(
+              `ledger-record:${input.id}:${recordsBeforeCapture.length + 1}-prompt-captured`,
+            ),
+            recordKind: 'PromptInputCaptured',
+            recordedAt: deterministicInstant,
+            source: parseResult.evidenceSource,
+          })
+
+          yield* ledger.append(promptRecord)
+
+          const recordsBeforeIr = yield* ledger.records
+          const irRecord = new SemanticIrProducedRecord({
+            id: Schema.decodeUnknownSync(SemanticIrProducedRecord.fields.id)(
+              `ledger-record:${input.id}:${recordsBeforeIr.length + 1}-semantic-ir-produced`,
+            ),
+            recordKind: 'SemanticIrProduced',
+            recordedAt: deterministicInstant,
+            semanticIr: parseResult.semanticIr,
+          })
+
+          yield* ledger.append(irRecord)
+
+          const result = new PromptClarificationWorkflowResult({
+            evidenceSource: parseResult.evidenceSource,
+            semanticIr: parseResult.semanticIr,
+            decision,
+            ledgerRecords: yield* ledger.records,
+          })
+
+          return yield* Schema.decodeUnknownEffect(PromptClarificationWorkflowResult)(result)
+        },
+      )
+
+      return PromptClarificationWorkflow.of({ clarifyPrompt })
+    }),
+  )
+}
+
 export function layerInMemoryWithActiveEnvironment(
   basePackageId: PackageId,
   kernelIdentity: SemanticKernelIdentity = defaultSemanticKernelIdentity,
@@ -627,5 +942,16 @@ export function layerInMemoryWithActiveEnvironment(
     Layer.provide(SemanticKernel.layerFromIdentity(kernelIdentity)),
     Layer.provide(BaseSemanticLayer.layerFromPackageId(basePackageId)),
     Layer.provideMerge(layerInMemory),
+  )
+}
+
+export function layerInMemoryWithPromptClarification(
+  basePackageId: PackageId,
+  kernelIdentity: SemanticKernelIdentity = defaultSemanticKernelIdentity,
+) {
+  return PromptClarificationWorkflow.layer.pipe(
+    Layer.provide(RequestDecisionEngine.layer),
+    Layer.provide(SemanticParser.layerDeterministic),
+    Layer.provideMerge(layerInMemoryWithActiveEnvironment(basePackageId, kernelIdentity)),
   )
 }
