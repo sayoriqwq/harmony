@@ -17,6 +17,12 @@ L2 第一阶段落地原则
 L3 架构不变量与验收基线
 └── docs/first-phase/semantic-system-principles-v0.1.md
 
+V1 实现对齐材料
+└── docs/first-phase/v1-effect-implementation-alignment.md
+
+架构决策记录
+└── docs/adr/*.md
+
 工程实践
 └── docs/engineering/effect.md
 ```
@@ -31,7 +37,11 @@ L3 架构不变量与验收基线
    然后确认第一阶段如何克制落地，哪些能力必须先做，哪些能力主动延后。
 4. `docs/first-phase/semantic-system-principles-v0.1.md`
    最后读取当前权威规范。后续架构、Schema、实现和验收都应服从这里的不变量。
-5. `docs/engineering/effect.md`
+5. `docs/first-phase/v1-effect-implementation-alignment.md`
+   进入 V1 PRD 或 issue 拆分前读取，确认已经收束的 Effect 实现取舍和 capability scope。
+6. `docs/adr/*.md`
+   实现前读取相关 ADR，确认已经接受的架构取舍。
+7. `docs/engineering/effect.md`
    编写 Effect 代码时读取，确认 harness 入口、默认写法、测试规则和验证命令。
 
 ## 权威关系
@@ -46,6 +56,8 @@ L3 架构不变量与验收基线
 - `research-map.md` 只保存理论依据和设计启发，不直接规定实现。
 - `mvp-loop-principles.md` 只回答第一阶段如何尽快跑通最小语义闭环。
 - `semantic-system-principles-v0.1.md` 只固定原则、不变量、验收基线和重大变更规则。
+- `v1-effect-implementation-alignment.md` 只保存 V1 PRD 和 issue 派发前的对齐结论，不替代权威规范。
+- `docs/adr/` 只记录已经接受且会约束后续实现的架构取舍。
 - `engineering/effect.md` 只保存本仓库编写 Effect 代码的工程入口，不替代
   `effect-harness` 或 pinned official Effect source。
 

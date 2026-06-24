@@ -23,12 +23,14 @@
 - `docs/theory/research-map.md`
 - `docs/first-phase/mvp-loop-principles.md`
 - `docs/first-phase/semantic-system-principles-v0.1.md`
+- `docs/first-phase/v1-effect-implementation-alignment.md`
+- `docs/engineering/effect.md`
 
 ## 使用项目词汇
 
 在 issue 标题、实现计划、重构建议、假设或测试名中命名领域概念时，使用 `CONTEXT.md` 和源文档中已经定义的术语。
 
-不要随意替换这些已建立的概念名：Vocabulary Source、Semantic Package、Active Semantic Environment、Semantic IR、Semantic Lint、Case、Correction、Patch Candidate、Regression Case。
+不要随意替换这些已建立的概念名：Vocabulary Source、Semantic Package、Active Semantic Environment、Semantic IR、Semantic Lint、Case、Correction、CaseSemanticEdit、Correction Diagnosis、Semantic Patch Candidate、Regression Case。
 
 如果需要的概念还不在术语表中，要么说明这是文档语言缺口，要么重新判断当前工作是否正在引入新概念。
 
