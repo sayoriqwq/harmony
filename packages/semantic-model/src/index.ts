@@ -29,6 +29,10 @@ export const SemanticPatchCandidateId = idPattern('semantic-patch-candidate').pi
   Schema.brand('SemanticPatchCandidateId'),
 )
 
+export const RegressionCaseId = idPattern('regression-case').pipe(Schema.brand('RegressionCaseId'))
+
+export const RegressionRunId = idPattern('regression-run').pipe(Schema.brand('RegressionRunId'))
+
 export const SourceSpanId = idPattern('source-span').pipe(Schema.brand('SourceSpanId'))
 
 export const DocumentSectionId = idPattern('document-section').pipe(Schema.brand('DocumentSectionId'))
@@ -122,9 +126,16 @@ export const SemanticLintClassification = Schema.Literals([
 
 export const CaseStatus = Schema.Literals(['opened', 'locally_corrected'])
 
-export const SemanticPatchCandidateLifecycle = Schema.Literals(['proposed'])
+export const PackageVersionState = Schema.Literals(['published'])
 
-export const SemanticPatchCandidateState = Schema.Literals(['awaiting_regression'])
+export const SemanticPatchCandidateLifecycle = Schema.Literals(['proposed', 'published'])
+
+export const SemanticPatchCandidateState = Schema.Literals([
+  'awaiting_regression',
+  'regression_passed',
+  'regression_failed',
+  'published',
+])
 
 export const SemanticPatchCandidateKind = Schema.Literals([
   'case_binding_example_patch',
@@ -135,6 +146,26 @@ export const SemanticPatchCandidateKind = Schema.Literals([
   'lint_rule_patch',
   'rule_scope_patch',
   'business_version_patch',
+])
+
+export const SemanticPatchExpectedImpactKind = Schema.Literals([
+  'package_definition_update',
+  'runtime_policy_update',
+])
+
+export const SemanticPatchTargetKind = Schema.Literals([
+  'semantic_package',
+  'active_environment',
+  'semantic_rule',
+])
+
+export const RegressionAssertionOutcome = Schema.Literals(['passed', 'failed'])
+
+export const RegressionAssertionKind = Schema.Literals(['package_definition_contains'])
+
+export const PatchPublicationExpectedOutcome = Schema.Literals([
+  'domain_patch_candidate',
+  'regression_run_passed',
 ])
 
 export const LintFindingReason = Schema.Literals([
@@ -363,6 +394,7 @@ export class PackageVersion extends Schema.Class<PackageVersion>('harmony.semant
   id: PackageVersionId,
   packageId: PackageId,
   version: Schema.NonEmptyString,
+  state: PackageVersionState,
   publishedPackageId: PublishedPackageId,
   sourceDraftId: PackageDraftId,
   runtimeBinding: RuntimeBindingIdentity,
@@ -768,6 +800,57 @@ export const SemanticPatchScope = Schema.Union([
 ])
 export type SemanticPatchScopeType = typeof SemanticPatchScope.Type
 
+export class SemanticPackagePatchTarget extends Schema.Class<SemanticPackagePatchTarget>(
+  'harmony.semantic-model/SemanticPackagePatchTarget',
+)({
+  targetKind: Schema.Literal('semantic_package'),
+  packageRef: SemanticPackageRef,
+}) {}
+
+export class ActiveEnvironmentPatchTarget extends Schema.Class<ActiveEnvironmentPatchTarget>(
+  'harmony.semantic-model/ActiveEnvironmentPatchTarget',
+)({
+  targetKind: Schema.Literal('active_environment'),
+  environmentRef: ActiveEnvironmentId,
+}) {}
+
+export class SemanticRulePatchTarget extends Schema.Class<SemanticRulePatchTarget>(
+  'harmony.semantic-model/SemanticRulePatchTarget',
+)({
+  targetKind: Schema.Literal('semantic_rule'),
+  ruleRef: SemanticRuleRef,
+}) {}
+
+export const SemanticPatchTarget = Schema.Union([
+  SemanticPackagePatchTarget,
+  ActiveEnvironmentPatchTarget,
+  SemanticRulePatchTarget,
+])
+export type SemanticPatchTargetType = typeof SemanticPatchTarget.Type
+
+export class PackageDefinitionExpectedImpact extends Schema.Class<PackageDefinitionExpectedImpact>(
+  'harmony.semantic-model/PackageDefinitionExpectedImpact',
+)({
+  impactKind: Schema.Literal('package_definition_update'),
+  summary: Schema.NonEmptyString,
+  expectedDefinitionText: Schema.NonEmptyString,
+  expectedBehavior: Schema.NonEmptyString,
+}) {}
+
+export class RuntimePolicyExpectedImpact extends Schema.Class<RuntimePolicyExpectedImpact>(
+  'harmony.semantic-model/RuntimePolicyExpectedImpact',
+)({
+  impactKind: Schema.Literal('runtime_policy_update'),
+  summary: Schema.NonEmptyString,
+  expectedBehavior: Schema.NonEmptyString,
+}) {}
+
+export const SemanticPatchExpectedImpact = Schema.Union([
+  PackageDefinitionExpectedImpact,
+  RuntimePolicyExpectedImpact,
+])
+export type SemanticPatchExpectedImpactType = typeof SemanticPatchExpectedImpact.Type
+
 export class SemanticPatchCandidate extends Schema.Class<SemanticPatchCandidate>(
   'harmony.semantic-model/SemanticPatchCandidate',
 )({
@@ -776,6 +859,7 @@ export class SemanticPatchCandidate extends Schema.Class<SemanticPatchCandidate>
   candidateKind: SemanticPatchCandidateKind,
   lifecycle: SemanticPatchCandidateLifecycle,
   state: SemanticPatchCandidateState,
+  target: SemanticPatchTarget,
   sourceCaseId: CaseId,
   sourceCorrectionId: CorrectionId,
   sourceCaseSemanticEditId: CaseSemanticEditId,
@@ -783,8 +867,54 @@ export class SemanticPatchCandidate extends Schema.Class<SemanticPatchCandidate>
   scope: SemanticPatchScope,
   proposedChangeSummary: Schema.NonEmptyString,
   rationale: CorrectionDiagnosisRationale,
+  expectedImpact: SemanticPatchExpectedImpact,
   evidenceRefs: Schema.Array(EvidenceRef),
   createdAt: Schema.NonEmptyString,
+}) {}
+
+export class PackageDefinitionContainsAssertion extends Schema.Class<PackageDefinitionContainsAssertion>(
+  'harmony.semantic-model/PackageDefinitionContainsAssertion',
+)({
+  assertionKind: Schema.Literal('package_definition_contains'),
+  packageId: PackageId,
+  requiredText: Schema.NonEmptyString,
+}) {}
+
+export const RegressionAssertion = Schema.Union([PackageDefinitionContainsAssertion])
+export type RegressionAssertionType = typeof RegressionAssertion.Type
+
+export class RegressionCase extends Schema.Class<RegressionCase>('harmony.semantic-model/RegressionCase')({
+  id: RegressionCaseId,
+  artifactKind: Schema.Literal('regression-case'),
+  patchCandidateId: SemanticPatchCandidateId,
+  sourceCaseId: CaseId,
+  sourceCorrectionId: CorrectionId,
+  targetPackage: SemanticPackageRef,
+  assertion: RegressionAssertion,
+  rationale: Schema.NonEmptyString,
+  createdAt: Schema.NonEmptyString,
+}) {}
+
+export class RegressionAssertionResult extends Schema.Class<RegressionAssertionResult>(
+  'harmony.semantic-model/RegressionAssertionResult',
+)({
+  assertionKind: RegressionAssertionKind,
+  outcome: RegressionAssertionOutcome,
+  expected: Schema.NonEmptyString,
+  actual: Schema.NonEmptyString,
+}) {}
+
+export class RegressionRun extends Schema.Class<RegressionRun>('harmony.semantic-model/RegressionRun')({
+  id: RegressionRunId,
+  artifactKind: Schema.Literal('regression-run'),
+  regressionCaseId: RegressionCaseId,
+  patchCandidateId: SemanticPatchCandidateId,
+  targetPackageId: PackageId,
+  targetPackageVersionId: PackageVersionId,
+  outcome: RegressionAssertionOutcome,
+  assertionResults: Schema.Array(RegressionAssertionResult),
+  startedAt: Schema.NonEmptyString,
+  completedAt: Schema.NonEmptyString,
 }) {}
 
 export class NoSemanticPatchCandidateResult extends Schema.Class<NoSemanticPatchCandidateResult>(
@@ -870,6 +1000,34 @@ export class PackagePublishResult extends Schema.Class<PackagePublishResult>(
   packageVersion: PackageVersion,
 }) {}
 
+export class VocabularyDraftPublicationSource extends Schema.Class<VocabularyDraftPublicationSource>(
+  'harmony.semantic-model/VocabularyDraftPublicationSource',
+)({
+  sourceKind: Schema.Literal('vocabulary_draft'),
+  sourceDraftId: PackageDraftId,
+  sourceIds: Schema.Array(EvidenceSourceId),
+}) {}
+
+export class SemanticPatchCandidatePublicationSource extends Schema.Class<SemanticPatchCandidatePublicationSource>(
+  'harmony.semantic-model/SemanticPatchCandidatePublicationSource',
+)({
+  sourceKind: Schema.Literal('semantic_patch_candidate'),
+  patchCandidateId: SemanticPatchCandidateId,
+  sourceCaseId: CaseId,
+  sourceCorrectionId: CorrectionId,
+  sourceCaseSemanticEditId: CaseSemanticEditId,
+  sourceDiagnosisId: CorrectionDiagnosisId,
+  regressionCaseId: RegressionCaseId,
+  regressionRunId: RegressionRunId,
+  previousPackageVersionId: PackageVersionId,
+}) {}
+
+export const PackageVersionPublicationSource = Schema.Union([
+  VocabularyDraftPublicationSource,
+  SemanticPatchCandidatePublicationSource,
+])
+export type PackageVersionPublicationSourceType = typeof PackageVersionPublicationSource.Type
+
 export class PromptParseResult extends Schema.Class<PromptParseResult>(
   'harmony.semantic-model/PromptParseResult',
 )({
@@ -910,6 +1068,7 @@ export class PackageVersionPublishedRecord extends Schema.Class<PackageVersionPu
   recordedAt: Schema.NonEmptyString,
   publishedPackage: PublishedSemanticPackage,
   packageVersion: PackageVersion,
+  publicationSource: PackageVersionPublicationSource,
 }) {}
 
 export class PromptInputCapturedRecord extends Schema.Class<PromptInputCapturedRecord>(
@@ -1018,6 +1177,37 @@ export class SemanticPatchCandidateProposedRecord extends Schema.Class<SemanticP
   patchCandidate: SemanticPatchCandidate,
 }) {}
 
+export class RegressionCaseCreatedRecord extends Schema.Class<RegressionCaseCreatedRecord>(
+  'harmony.semantic-model/RegressionCaseCreatedRecord',
+)({
+  id: LedgerRecordId,
+  recordKind: Schema.Literal('RegressionCaseCreated'),
+  recordedAt: Schema.NonEmptyString,
+  regressionCase: RegressionCase,
+}) {}
+
+export class RegressionRunCompletedRecord extends Schema.Class<RegressionRunCompletedRecord>(
+  'harmony.semantic-model/RegressionRunCompletedRecord',
+)({
+  id: LedgerRecordId,
+  recordKind: Schema.Literal('RegressionRunCompleted'),
+  recordedAt: Schema.NonEmptyString,
+  regressionRun: RegressionRun,
+  patchCandidate: SemanticPatchCandidate,
+}) {}
+
+export class SemanticPatchCandidatePublishedRecord extends Schema.Class<SemanticPatchCandidatePublishedRecord>(
+  'harmony.semantic-model/SemanticPatchCandidatePublishedRecord',
+)({
+  id: LedgerRecordId,
+  recordKind: Schema.Literal('SemanticPatchCandidatePublished'),
+  recordedAt: Schema.NonEmptyString,
+  patchCandidate: SemanticPatchCandidate,
+  packageVersionId: PackageVersionId,
+  publishedPackageId: PublishedPackageId,
+  regressionRunId: RegressionRunId,
+}) {}
+
 export const LedgerRecord = Schema.Union([
   VocabularySourceImportedRecord,
   SemanticPackageDraftCompiledRecord,
@@ -1033,6 +1223,9 @@ export const LedgerRecord = Schema.Union([
   CorrectionDiagnosedRecord,
   NoSemanticPatchCandidateRecord,
   SemanticPatchCandidateProposedRecord,
+  RegressionCaseCreatedRecord,
+  RegressionRunCompletedRecord,
+  SemanticPatchCandidatePublishedRecord,
 ])
 export type LedgerRecordType = typeof LedgerRecord.Type
 
@@ -1121,5 +1314,35 @@ export class CorrectionDiagnosisWorkflowResult extends Schema.Class<CorrectionDi
   gateResult: CorrectionDiagnosisGateResult,
   diagnosedRecord: CorrectionDiagnosedRecord,
   gateRecord: Schema.Union([NoSemanticPatchCandidateRecord, SemanticPatchCandidateProposedRecord]),
+  ledgerRecords: Schema.Array(LedgerRecord),
+}) {}
+
+export class RegressionCaseCreationResult extends Schema.Class<RegressionCaseCreationResult>(
+  'harmony.semantic-model/RegressionCaseCreationResult',
+)({
+  regressionCase: RegressionCase,
+  ledgerRecord: RegressionCaseCreatedRecord,
+  ledgerRecords: Schema.Array(LedgerRecord),
+}) {}
+
+export class RegressionRunResult extends Schema.Class<RegressionRunResult>('harmony.semantic-model/RegressionRunResult')({
+  regressionCase: RegressionCase,
+  regressionRun: RegressionRun,
+  patchCandidate: SemanticPatchCandidate,
+  ledgerRecord: RegressionRunCompletedRecord,
+  ledgerRecords: Schema.Array(LedgerRecord),
+}) {}
+
+export class SemanticPatchPublicationResult extends Schema.Class<SemanticPatchPublicationResult>(
+  'harmony.semantic-model/SemanticPatchPublicationResult',
+)({
+  patchCandidate: SemanticPatchCandidate,
+  regressionRun: RegressionRun,
+  publishedPackage: PublishedSemanticPackage,
+  packageVersion: PackageVersion,
+  previousPackageVersion: PackageVersion,
+  packageVersionRecord: PackageVersionPublishedRecord,
+  patchCandidatePublishedRecord: SemanticPatchCandidatePublishedRecord,
+  currentView: PackageCurrentView,
   ledgerRecords: Schema.Array(LedgerRecord),
 }) {}

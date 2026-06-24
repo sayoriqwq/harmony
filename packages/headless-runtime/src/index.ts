@@ -15,6 +15,7 @@ import type {
 } from '@harmony/semantic-model'
 import {
   ActiveEnvironmentBuildResult,
+  ActiveEnvironmentPatchTarget,
   ActiveEnvironmentProvenance,
   ActiveSemanticEnvironment,
   ActiveSemanticEnvironmentConstructedRecord,
@@ -58,18 +59,28 @@ import {
   NoSemanticPatchCandidateResult,
   PackageActivation,
   PackageCurrentView,
+  PackageDefinitionContainsAssertion,
+  PackageDefinitionExpectedImpact,
   PackageId as PackageIdSchema,
   PackagePublishResult,
   PackageSelectionPatchScope,
   PackageVersion,
   PackageVersionPublishedRecord,
   ParserPatchScope,
+  PatchPublicationExpectedOutcome,
   ProhibitedAction,
   PromptClarificationWorkflowResult,
   PromptEvidenceSource,
   PromptInputCapturedRecord,
   PromptParseResult,
   PublishedSemanticPackage,
+  RegressionAssertionResult,
+  RegressionCase,
+  RegressionCaseCreatedRecord,
+  RegressionCaseCreationResult,
+  RegressionRun,
+  RegressionRunCompletedRecord,
+  RegressionRunResult,
   RelationAssertion,
   RequestDecision as RequestDecisionSchema,
   RequestFrame,
@@ -77,6 +88,7 @@ import {
   RulePatchScope,
   RuleScopePatchScope,
   RuntimeBindingIdentity,
+  RuntimePolicyExpectedImpact,
   SemanticIr,
   SemanticIrProducedRecord,
   SemanticKernelIdentity,
@@ -85,15 +97,21 @@ import {
   SemanticLintReportProducedRecord,
   SemanticPackageDraft,
   SemanticPackageDraftCompiledRecord,
+  SemanticPackagePatchTarget,
   SemanticPackageRef,
   SemanticPatchCandidate,
   SemanticPatchCandidateProposalResult,
   SemanticPatchCandidateProposedRecord,
+  SemanticPatchCandidatePublicationSource,
+  SemanticPatchCandidatePublishedRecord,
+  SemanticPatchPublicationResult,
+  SemanticRulePatchTarget,
   SemanticRuleRef,
   SourceSpan,
   Term,
   UnresolvedSpan,
   VocabularyCompileResult,
+  VocabularyDraftPublicationSource,
   VocabularySourceImportedRecord,
 } from '@harmony/semantic-model'
 import { Context, Effect, Layer, Ref, Schema } from 'effect'
@@ -108,6 +126,7 @@ const promptDecisionVersion = 'deterministic-request-decision@0.1.0'
 const documentParserVersion = 'deterministic-document-parser@0.1.0'
 const semanticLintVersion = 'deterministic-semantic-lint@0.1.0'
 const correctionWorkflowVersion = 'deterministic-correction-workflow@0.1.0'
+const semanticPatchPublisherVersion = 'deterministic-semantic-patch-publisher@0.1.0'
 
 export const defaultSemanticKernelIdentity = new SemanticKernelIdentity({
   id: Schema.decodeUnknownSync(SemanticKernelIdentity.fields.id)('semantic-kernel:harmony-v1'),
@@ -175,6 +194,15 @@ export class CorrectionDiagnosisError extends Schema.TaggedErrorClass<Correction
   'CorrectionDiagnosisError',
   {
     caseId: Schema.String,
+    message: Schema.String,
+  },
+) {}
+
+export class PatchPublicationBlocked extends Schema.TaggedErrorClass<PatchPublicationBlocked>()(
+  'PatchPublicationBlocked',
+  {
+    candidateId: Schema.String,
+    expectedOutcome: PatchPublicationExpectedOutcome,
     message: Schema.String,
   },
 ) {}
@@ -439,11 +467,60 @@ function noPatchResultForDiagnosis(diagnosis: LocalCorrectionOnlyDiagnosis) {
   })
 }
 
+function patchTargetForScope(scope: SemanticPatchCandidate['scope']): SemanticPatchCandidate['target'] {
+  switch (scope.scopeKind) {
+    case 'base':
+    case 'domain':
+    case 'version':
+      return new SemanticPackagePatchTarget({
+        targetKind: 'semantic_package',
+        packageRef: scope.packageRef,
+      })
+    case 'package_selection':
+    case 'parser':
+      return new ActiveEnvironmentPatchTarget({
+        targetKind: 'active_environment',
+        environmentRef: scope.environmentRef,
+      })
+    case 'rule':
+    case 'rule_scope':
+      return new SemanticRulePatchTarget({
+        targetKind: 'semantic_rule',
+        ruleRef: scope.ruleRef,
+      })
+  }
+
+  const _exhaustive: never = scope
+  return _exhaustive
+}
+
+function packageDefinitionImpact(
+  summary: string,
+  expectedDefinitionText: string,
+  expectedBehavior: string,
+): SemanticPatchCandidate['expectedImpact'] {
+  return new PackageDefinitionExpectedImpact({
+    impactKind: 'package_definition_update',
+    summary,
+    expectedDefinitionText,
+    expectedBehavior,
+  })
+}
+
+function runtimePolicyImpact(summary: string, expectedBehavior: string): SemanticPatchCandidate['expectedImpact'] {
+  return new RuntimePolicyExpectedImpact({
+    impactKind: 'runtime_policy_update',
+    summary,
+    expectedBehavior,
+  })
+}
+
 function candidateProposalForDiagnosis(
   diagnosis: Exclude<CorrectionDiagnosis, LocalCorrectionOnlyDiagnosis>,
   candidateKind: SemanticPatchCandidate['candidateKind'],
   scope: SemanticPatchCandidate['scope'],
   proposedChangeSummary: string,
+  expectedImpact: SemanticPatchCandidate['expectedImpact'],
 ) {
   const patchCandidate = new SemanticPatchCandidate({
     id: Schema.decodeUnknownSync(SemanticPatchCandidate.fields.id)(
@@ -453,6 +530,7 @@ function candidateProposalForDiagnosis(
     candidateKind,
     lifecycle: 'proposed',
     state: 'awaiting_regression',
+    target: patchTargetForScope(scope),
     sourceCaseId: diagnosis.evidence.caseId,
     sourceCorrectionId: diagnosis.evidence.correctionId,
     sourceCaseSemanticEditId: diagnosis.evidence.caseSemanticEditId,
@@ -460,6 +538,7 @@ function candidateProposalForDiagnosis(
     scope,
     proposedChangeSummary,
     rationale: diagnosis.rationale,
+    expectedImpact,
     evidenceRefs: diagnosis.evidenceRefs,
     createdAt: deterministicInstant,
   })
@@ -493,6 +572,10 @@ function gateResultForDiagnosis(diagnosis: CorrectionDiagnosis): CorrectionDiagn
           environmentRef: diagnosis.targetEnvironmentRef,
         }),
         'Add a scoped parser or binding example so this corrected interpretation is reproducible.',
+        runtimePolicyImpact(
+          'Parser or binding policy should reproduce the corrected interpretation.',
+          'The corrected Case interpretation is selected without relying on package mutation.',
+        ),
       )
     case 'BaseLayerMissingOrWrong':
       return candidateProposalForDiagnosis(
@@ -503,6 +586,11 @@ function gateResultForDiagnosis(diagnosis: CorrectionDiagnosis): CorrectionDiagn
           packageRef: diagnosis.targetPackage,
         }),
         'Propose a Base Layer semantic package change scoped to the corrected interpretation.',
+        packageDefinitionImpact(
+          'Base package definition should capture the corrected interpretation.',
+          'Base semantics include the corrected request interpretation while preserving rewrite prohibition.',
+          'Future base-layer requests preserve the corrected validate-without-rewrite behavior.',
+        ),
       )
     case 'DomainPackageMissingOrWrong':
       return candidateProposalForDiagnosis(
@@ -513,6 +601,11 @@ function gateResultForDiagnosis(diagnosis: CorrectionDiagnosis): CorrectionDiagn
           packageRef: diagnosis.targetPackage,
         }),
         'Propose a Domain Package semantic change scoped to the corrected interpretation.',
+        packageDefinitionImpact(
+          'Domain package definition should capture the corrected interpretation.',
+          'Domain package controls refund review semantics; corrected requests must validate without rewriting target content.',
+          'Future domain-enabled refund review requests validate the target and keep rewrite prohibited.',
+        ),
       )
     case 'PackageSelectionError':
       return candidateProposalForDiagnosis(
@@ -523,6 +616,10 @@ function gateResultForDiagnosis(diagnosis: CorrectionDiagnosis): CorrectionDiagn
           environmentRef: diagnosis.targetEnvironmentRef,
         }),
         'Propose an environment or package activation policy change for this corrected interpretation.',
+        runtimePolicyImpact(
+          'Package activation policy should route this corrected interpretation to the right package.',
+          'Future runs select the intended package activation path before parsing the request.',
+        ),
       )
     case 'ParserNegationScopeConditionError':
       return candidateProposalForDiagnosis(
@@ -533,6 +630,10 @@ function gateResultForDiagnosis(diagnosis: CorrectionDiagnosis): CorrectionDiagn
           environmentRef: diagnosis.targetEnvironmentRef,
         }),
         'Propose a parser policy example for negation, scope, or condition handling.',
+        runtimePolicyImpact(
+          'Parser policy should preserve the corrected negation, scope, or condition semantics.',
+          'Future parses reproduce the corrected scope without changing semantic package assertions.',
+        ),
       )
     case 'LintRuleWrong':
       return candidateProposalForDiagnosis(
@@ -543,6 +644,10 @@ function gateResultForDiagnosis(diagnosis: CorrectionDiagnosis): CorrectionDiagn
           ruleRef: diagnosis.targetRule,
         }),
         'Propose a lint rule change scoped to the diagnosed rule.',
+        runtimePolicyImpact(
+          'Lint rule behavior should follow the corrected rule interpretation.',
+          'Future lint runs classify the target rule according to the corrected diagnosis.',
+        ),
       )
     case 'RuleScopeWrong':
       return candidateProposalForDiagnosis(
@@ -553,6 +658,10 @@ function gateResultForDiagnosis(diagnosis: CorrectionDiagnosis): CorrectionDiagn
           ruleRef: diagnosis.targetRule,
         }),
         'Propose a rule scope change for the diagnosed semantic rule.',
+        runtimePolicyImpact(
+          'Rule scope should be narrowed or moved according to the correction diagnosis.',
+          'Future lint runs apply the diagnosed rule only within its corrected scope.',
+        ),
       )
     case 'BusinessVersionChanged':
       return candidateProposalForDiagnosis(
@@ -563,6 +672,11 @@ function gateResultForDiagnosis(diagnosis: CorrectionDiagnosis): CorrectionDiagn
           packageRef: diagnosis.targetPackage,
         }),
         'Propose a new package version candidate while preserving the prior version.',
+        packageDefinitionImpact(
+          'Package definition should represent the changed business version.',
+          'Business semantics changed and require a new package version while the old version stays available.',
+          'Future runs can activate the new business version without mutating historical versions.',
+        ),
       )
   }
 
@@ -933,6 +1047,7 @@ export class PackagePublisher extends Context.Service<PackagePublisher, {
           id: Schema.decodeUnknownSync(PackageVersion.fields.id)(`package-version:${draft.namespace}:${version}`),
           packageId: draft.packageId,
           version,
+          state: 'published',
           publishedPackageId: publishedPackage.id,
           sourceDraftId: draft.id,
           runtimeBinding: new RuntimeBindingIdentity({
@@ -1002,6 +1117,11 @@ export class GlossaryPackageWorkflow extends Context.Service<GlossaryPackageWork
             recordedAt: deterministicInstant,
             publishedPackage: publishResult.publishedPackage,
             packageVersion: publishResult.packageVersion,
+            publicationSource: new VocabularyDraftPublicationSource({
+              sourceKind: 'vocabulary_draft',
+              sourceDraftId: compileResult.draft.id,
+              sourceIds: [compileResult.evidenceSource.id],
+            }),
           })
           yield* ledger.append(publishRecord)
 
@@ -1796,6 +1916,342 @@ export class CorrectionDiagnosisWorkflow extends Context.Service<CorrectionDiagn
   )
 }
 
+function isRegressionRunCompletedRecord(record: LedgerRecord): record is RegressionRunCompletedRecord {
+  return record.recordKind === 'RegressionRunCompleted'
+}
+
+const domainPackageRefForCandidate = Effect.fn('domainPackageRefForCandidate')(
+  function* (candidate: SemanticPatchCandidate): Effect.fn.Return<SemanticPackageRef, PatchPublicationBlocked> {
+    if (
+      candidate.candidateKind !== 'domain_package_patch'
+      || candidate.scope.scopeKind !== 'domain'
+      || candidate.target.targetKind !== 'semantic_package'
+      || candidate.target.packageRef.role !== 'domain'
+    ) {
+      return yield* new PatchPublicationBlocked({
+        candidateId: candidate.id,
+        expectedOutcome: 'domain_patch_candidate',
+        message: 'Publication in this slice only accepts Domain Semantic Patch Candidates.',
+      })
+    }
+    return candidate.target.packageRef
+  },
+)
+
+const packageDefinitionImpactForCandidate = Effect.fn('packageDefinitionImpactForCandidate')(
+  function* (
+    candidate: SemanticPatchCandidate,
+  ): Effect.fn.Return<PackageDefinitionExpectedImpact, PatchPublicationBlocked> {
+    if (candidate.expectedImpact.impactKind !== 'package_definition_update') {
+      return yield* new PatchPublicationBlocked({
+        candidateId: candidate.id,
+        expectedOutcome: 'domain_patch_candidate',
+        message: 'Domain patch publication requires a package definition expected impact.',
+      })
+    }
+    return candidate.expectedImpact
+  },
+)
+
+function candidateWithState(
+  candidate: SemanticPatchCandidate,
+  lifecycle: SemanticPatchCandidate['lifecycle'],
+  state: SemanticPatchCandidate['state'],
+) {
+  return new SemanticPatchCandidate({
+    ...candidate,
+    lifecycle,
+    state,
+  })
+}
+
+function patchedArtifactsFromImpact(
+  view: PackageCurrentView,
+  impact: PackageDefinitionExpectedImpact,
+): PublishedSemanticPackage['artifacts'] {
+  return {
+    terms: view.publishedPackage.artifacts.terms,
+    lexicalSenses: view.publishedPackage.artifacts.lexicalSenses,
+    concepts: view.publishedPackage.artifacts.concepts,
+    definitions: view.publishedPackage.artifacts.definitions.map(definition =>
+      new Definition({
+        ...definition,
+        text: impact.expectedDefinitionText,
+      })),
+  }
+}
+
+function definitionTextForPatchedPackage(view: PackageCurrentView, impact: PackageDefinitionExpectedImpact) {
+  return patchedArtifactsFromImpact(view, impact)
+    .definitions
+    .map(definition => definition.text)
+    .join('\n')
+}
+
+function latestRegressionRunRecord(
+  records: ReadonlyArray<LedgerRecord>,
+  candidate: SemanticPatchCandidate,
+) {
+  return records
+    .filter(isRegressionRunCompletedRecord)
+    .filter(record => record.regressionRun.patchCandidateId === candidate.id)
+    .at(-1)
+}
+
+export class SemanticPatchPublicationWorkflow extends Context.Service<SemanticPatchPublicationWorkflow, {
+  createRegressionCase: (
+    candidate: SemanticPatchCandidate,
+  ) => Effect.Effect<RegressionCaseCreationResult, PatchPublicationBlocked | Schema.SchemaError>
+  runRegression: (
+    regressionCase: RegressionCase,
+    candidate: SemanticPatchCandidate,
+  ) => Effect.Effect<RegressionRunResult, PatchPublicationBlocked | LedgerViewNotFound | Schema.SchemaError>
+  publishCandidate: (
+    candidate: SemanticPatchCandidate,
+  ) => Effect.Effect<
+    SemanticPatchPublicationResult,
+    PatchPublicationBlocked | LedgerViewNotFound | Schema.SchemaError
+  >
+}>()('harmony/headless-runtime/SemanticPatchPublicationWorkflow') {
+  static readonly layer = Layer.effect(
+    SemanticPatchPublicationWorkflow,
+    Effect.gen(function* () {
+      const ledger = yield* SemanticLedger
+
+      const createRegressionCase = Effect.fn('SemanticPatchPublicationWorkflow.createRegressionCase')(
+        function* (candidate: SemanticPatchCandidate) {
+          const targetPackage = yield* domainPackageRefForCandidate(candidate)
+          const impact = yield* packageDefinitionImpactForCandidate(candidate)
+          const regressionCase = new RegressionCase({
+            id: Schema.decodeUnknownSync(RegressionCase.fields.id)(
+              `regression-case:${candidate.id}:publication`,
+            ),
+            artifactKind: 'regression-case',
+            patchCandidateId: candidate.id,
+            sourceCaseId: candidate.sourceCaseId,
+            sourceCorrectionId: candidate.sourceCorrectionId,
+            targetPackage,
+            assertion: new PackageDefinitionContainsAssertion({
+              assertionKind: 'package_definition_contains',
+              packageId: targetPackage.packageId,
+              requiredText: impact.expectedDefinitionText,
+            }),
+            rationale: impact.expectedBehavior,
+            createdAt: deterministicInstant,
+          })
+          const recordsBeforeCase = yield* ledger.records
+          const ledgerRecord = new RegressionCaseCreatedRecord({
+            id: Schema.decodeUnknownSync(RegressionCaseCreatedRecord.fields.id)(
+              `ledger-record:${regressionCase.id}:${recordsBeforeCase.length + 1}-regression-case-created`,
+            ),
+            recordKind: 'RegressionCaseCreated',
+            recordedAt: deterministicInstant,
+            regressionCase,
+          })
+          yield* ledger.append(ledgerRecord)
+
+          return yield* Schema.decodeUnknownEffect(RegressionCaseCreationResult)(
+            new RegressionCaseCreationResult({
+              regressionCase,
+              ledgerRecord,
+              ledgerRecords: yield* ledger.records,
+            }),
+          )
+        },
+      )
+
+      const runRegression = Effect.fn('SemanticPatchPublicationWorkflow.runRegression')(
+        function* (regressionCase: RegressionCase, candidate: SemanticPatchCandidate) {
+          const decodedCase = yield* Schema.decodeUnknownEffect(RegressionCase)(regressionCase)
+          const targetPackage = yield* domainPackageRefForCandidate(candidate)
+          const impact = yield* packageDefinitionImpactForCandidate(candidate)
+
+          if (decodedCase.patchCandidateId !== candidate.id) {
+            return yield* new PatchPublicationBlocked({
+              candidateId: candidate.id,
+              expectedOutcome: 'regression_run_passed',
+              message: 'RegressionCase patchCandidateId must match the Semantic Patch Candidate.',
+            })
+          }
+          if (decodedCase.targetPackage.packageId !== targetPackage.packageId) {
+            return yield* new PatchPublicationBlocked({
+              candidateId: candidate.id,
+              expectedOutcome: 'domain_patch_candidate',
+              message: 'RegressionCase target package must match the Domain Semantic Patch Candidate target.',
+            })
+          }
+
+          const view = yield* ledger.currentPackageView(targetPackage.packageId)
+          const actual = definitionTextForPatchedPackage(view, impact)
+          const assertion = decodedCase.assertion
+          const passed = actual.includes(assertion.requiredText)
+          const outcome = passed ? 'passed' : 'failed'
+          const assertionResult = new RegressionAssertionResult({
+            assertionKind: 'package_definition_contains',
+            outcome,
+            expected: assertion.requiredText,
+            actual,
+          })
+          const regressionRun = new RegressionRun({
+            id: Schema.decodeUnknownSync(RegressionRun.fields.id)(
+              `regression-run:${decodedCase.id}:${outcome}`,
+            ),
+            artifactKind: 'regression-run',
+            regressionCaseId: decodedCase.id,
+            patchCandidateId: candidate.id,
+            targetPackageId: targetPackage.packageId,
+            targetPackageVersionId: view.packageVersion.id,
+            outcome,
+            assertionResults: [assertionResult],
+            startedAt: deterministicInstant,
+            completedAt: deterministicInstant,
+          })
+          const regressedCandidate = candidateWithState(
+            candidate,
+            'proposed',
+            passed ? 'regression_passed' : 'regression_failed',
+          )
+          const recordsBeforeRun = yield* ledger.records
+          const ledgerRecord = new RegressionRunCompletedRecord({
+            id: Schema.decodeUnknownSync(RegressionRunCompletedRecord.fields.id)(
+              `ledger-record:${regressionRun.id}:${recordsBeforeRun.length + 1}-regression-run-completed`,
+            ),
+            recordKind: 'RegressionRunCompleted',
+            recordedAt: deterministicInstant,
+            regressionRun,
+            patchCandidate: regressedCandidate,
+          })
+          yield* ledger.append(ledgerRecord)
+
+          return yield* Schema.decodeUnknownEffect(RegressionRunResult)(
+            new RegressionRunResult({
+              regressionCase: decodedCase,
+              regressionRun,
+              patchCandidate: regressedCandidate,
+              ledgerRecord,
+              ledgerRecords: yield* ledger.records,
+            }),
+          )
+        },
+      )
+
+      const publishCandidate = Effect.fn('SemanticPatchPublicationWorkflow.publishCandidate')(
+        function* (candidate: SemanticPatchCandidate) {
+          const targetPackage = yield* domainPackageRefForCandidate(candidate)
+          const impact = yield* packageDefinitionImpactForCandidate(candidate)
+          const recordsBeforePublishAttempt = yield* ledger.records
+          const latestRunRecord = latestRegressionRunRecord(recordsBeforePublishAttempt, candidate)
+          if (latestRunRecord === undefined) {
+            return yield* new PatchPublicationBlocked({
+              candidateId: candidate.id,
+              expectedOutcome: 'regression_run_passed',
+              message: 'Publication requires a completed passing RegressionRun for this candidate.',
+            })
+          }
+          if (latestRunRecord.regressionRun.outcome !== 'passed') {
+            return yield* new PatchPublicationBlocked({
+              candidateId: candidate.id,
+              expectedOutcome: 'regression_run_passed',
+              message: 'Publication requires the latest RegressionRun for this candidate to pass.',
+            })
+          }
+
+          const previousView = yield* ledger.currentPackageView(targetPackage.packageId)
+          const nextVersion = countPublishedVersions(recordsBeforePublishAttempt, targetPackage.packageId) + 1
+          const version = `v${nextVersion}`
+          const publishedPackage = new PublishedSemanticPackage({
+            id: Schema.decodeUnknownSync(PublishedSemanticPackage.fields.id)(
+              `published-package:${previousView.publishedPackage.namespace}:${version}`,
+            ),
+            packageId: previousView.packageId,
+            namespace: previousView.publishedPackage.namespace,
+            lifecycle: 'published',
+            artifacts: patchedArtifactsFromImpact(previousView, impact),
+            authoritativeRelations: [],
+            authoritativeConstraints: [],
+            publishedAt: deterministicInstant,
+          })
+          const packageVersion = new PackageVersion({
+            id: Schema.decodeUnknownSync(PackageVersion.fields.id)(
+              `package-version:${previousView.publishedPackage.namespace}:${version}`,
+            ),
+            packageId: previousView.packageId,
+            version,
+            state: 'published',
+            publishedPackageId: publishedPackage.id,
+            sourceDraftId: previousView.packageVersion.sourceDraftId,
+            runtimeBinding: new RuntimeBindingIdentity({
+              schemaVersion: 'semantic-package.v1',
+              compilerVersion,
+              publisherVersion: semanticPatchPublisherVersion,
+              effectVersion,
+            }),
+            publishedAt: deterministicInstant,
+          })
+          const packageVersionRecord = new PackageVersionPublishedRecord({
+            id: Schema.decodeUnknownSync(PackageVersionPublishedRecord.fields.id)(
+              `ledger-record:${candidate.id}:${recordsBeforePublishAttempt.length + 1}-published-${version}`,
+            ),
+            recordKind: 'PackageVersionPublished',
+            recordedAt: deterministicInstant,
+            publishedPackage,
+            packageVersion,
+            publicationSource: new SemanticPatchCandidatePublicationSource({
+              sourceKind: 'semantic_patch_candidate',
+              patchCandidateId: candidate.id,
+              sourceCaseId: candidate.sourceCaseId,
+              sourceCorrectionId: candidate.sourceCorrectionId,
+              sourceCaseSemanticEditId: candidate.sourceCaseSemanticEditId,
+              sourceDiagnosisId: candidate.sourceDiagnosisId,
+              regressionCaseId: latestRunRecord.regressionRun.regressionCaseId,
+              regressionRunId: latestRunRecord.regressionRun.id,
+              previousPackageVersionId: previousView.packageVersion.id,
+            }),
+          })
+          yield* ledger.append(packageVersionRecord)
+
+          const publishedCandidate = candidateWithState(candidate, 'published', 'published')
+          const recordsBeforeCandidatePublished = yield* ledger.records
+          const patchCandidatePublishedRecord = new SemanticPatchCandidatePublishedRecord({
+            id: Schema.decodeUnknownSync(SemanticPatchCandidatePublishedRecord.fields.id)(
+              `ledger-record:${candidate.id}:${recordsBeforeCandidatePublished.length + 1}-candidate-published`,
+            ),
+            recordKind: 'SemanticPatchCandidatePublished',
+            recordedAt: deterministicInstant,
+            patchCandidate: publishedCandidate,
+            packageVersionId: packageVersion.id,
+            publishedPackageId: publishedPackage.id,
+            regressionRunId: latestRunRecord.regressionRun.id,
+          })
+          yield* ledger.append(patchCandidatePublishedRecord)
+
+          const currentView = yield* ledger.currentPackageView(targetPackage.packageId)
+
+          return yield* Schema.decodeUnknownEffect(SemanticPatchPublicationResult)(
+            new SemanticPatchPublicationResult({
+              patchCandidate: publishedCandidate,
+              regressionRun: latestRunRecord.regressionRun,
+              publishedPackage,
+              packageVersion,
+              previousPackageVersion: previousView.packageVersion,
+              packageVersionRecord,
+              patchCandidatePublishedRecord,
+              currentView,
+              ledgerRecords: yield* ledger.records,
+            }),
+          )
+        },
+      )
+
+      return SemanticPatchPublicationWorkflow.of({
+        createRegressionCase,
+        runRegression,
+        publishCandidate,
+      })
+    }),
+  )
+}
+
 export class SemanticLintService extends Context.Service<SemanticLintService, {
   lintDocument: (
     input: DocumentInput,
@@ -2021,6 +2477,15 @@ export function layerInMemoryWithCorrectionDiagnosis(
 ) {
   return CorrectionDiagnosisWorkflow.layer.pipe(
     Layer.provideMerge(layerInMemoryWithCorrection(basePackageId, kernelIdentity)),
+  )
+}
+
+export function layerInMemoryWithPatchPublication(
+  basePackageId: PackageId,
+  kernelIdentity: SemanticKernelIdentity = defaultSemanticKernelIdentity,
+) {
+  return SemanticPatchPublicationWorkflow.layer.pipe(
+    Layer.provideMerge(layerInMemoryWithCorrectionDiagnosis(basePackageId, kernelIdentity)),
   )
 }
 
