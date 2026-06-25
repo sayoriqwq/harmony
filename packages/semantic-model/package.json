@@ -3,6 +3,24 @@
   "type": "module",
   "private": true,
   "exports": {
-    ".": "./src/index.ts"
+    "./schema/ids": "./src/schema/ids.ts",
+    "./schema/literals": "./src/schema/literals.ts",
+    "./schema/input": "./src/schema/input.ts",
+    "./schema/package": "./src/schema/package.ts",
+    "./schema/environment": "./src/schema/environment.ts",
+    "./schema/semantic-ir": "./src/schema/semantic-ir.ts",
+    "./schema/case": "./src/schema/case.ts",
+    "./schema/request-decision": "./src/schema/request-decision.ts",
+    "./schema/correction-diagnosis": "./src/schema/correction-diagnosis.ts",
+    "./schema/semantic-patch": "./src/schema/semantic-patch.ts",
+    "./schema/regression": "./src/schema/regression.ts",
+    "./schema/correction-gate": "./src/schema/correction-gate.ts",
+    "./schema/lint": "./src/schema/lint.ts",
+    "./schema/results": "./src/schema/results.ts",
+    "./schema/ledger-record": "./src/schema/ledger-record.ts",
+    "./schema/workflow-result": "./src/schema/workflow-result.ts"
+  },
+  "dependencies": {
+    "effect": "catalog:"
   }
 }
