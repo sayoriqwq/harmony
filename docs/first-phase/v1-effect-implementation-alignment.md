@@ -135,7 +135,17 @@ Effect-first 落地要求：Evidence source 和 Structured artifact 都应有 Sc
 
 ## 当前实现事实
 
-仓库目前只有 Effect smoke test 和基础配置，还没有业务实现。因此 V1 的第一个选择不是“改造现有代码”，而是确定第一条可执行闭环切片的边界。
+V1 deterministic headless semantic core 已经完成第一轮实现。`packages/semantic-model`
+提供 Schema-first durable semantic objects；`packages/headless-runtime` 提供 Effect service、
+Layer、deterministic parser、workflow 和 in-memory append-only ledger 语义。
+
+GitHub PRD `#1` 已拆出并关闭 `#2` 到 `#9` 的 8 条 capability implementation issue。
+当前不是“只有 smoke test”，而是已经有 glossary、active environment、prompt clarification、
+document lint、correction、diagnosis、patch publication 和 historical regression blocking 的
+headless workflow acceptance tests。
+
+剩余缺口记录在 `docs/first-phase/v1-implementation-status.md`。当前实现仍不包含 HTTP、CLI、
+UI、真实 LLM Provider 或 file-backed durable ledger Layer。
 
 ## 已对齐决策
 
@@ -998,102 +1008,23 @@ AI inferred relation / constraint 不得静默成为 published assertion
 - 这条 capability 能最小化落地 “不完整 Vocabulary 可运行” 和 “词项/词义/概念分离” 两个核心理论。
 - 先做 Prompt parser 会缺少可绑定的 package；先做 Correction/Patch 会缺少 Case 和 Package 根。
 
-## PRD 准备状态
+## PRD 和 issue 状态
 
-当前已经足够进入 to-prd 的内容：
+PRD 已发布到 GitHub issue `#1`。8 条 V1 must-have capability 已拆为 `#2` 到 `#9`，
+并已完成第一轮 headless implementation。
 
-```text
-产品边界
-  headless semantic core
-  不做 HTTP / CLI / UI / 真实 LLM 作为 V1 前置
+当前本地文档补齐了实现后的状态材料：
 
-工程边界
-  packages/semantic-model
-  packages/headless-runtime
-  vertical capability slices
+- `docs/first-phase/v1-implementation-status.md`
+- `docs/first-phase/v1-capability-fixtures.md`
+- `docs/engineering/v1-usage.md`
+- `docs/engineering/package-exports.md`
 
-Effect 翻译规则
-  Schema 是 durable semantic objects 的源真相
-  Effect at boundaries, total functions in the model
-  Context.Service + Layer + Effect.fn + @effect/vitest
+后续不是继续 to-prd，而是围绕剩余缺口开 follow-up issue。最明确的下一阶段缺口是
+file-backed durable ledger Layer，已记录为 GitHub issue `#10`：当前 in-memory ledger 已证明
+append-only 语义和 derived current view，但还没有跨进程持久审计能力。
 
-核心模型原则
-  evidence source as audit
-  structured artifact as consumption model
-  append-only ledger + derived current views
-
-V1 核心对象
-  VocabularyInput / Semantic Package / PackageVersion
-  SemanticInput discriminated union
-  minimal frame-based Semantic IR
-  closed Kernel frames + open typed Domain frames
-  Correction / CaseSemanticEdit / CorrectionDiagnosis / SemanticPatchCandidate / RegressionCase
-
-V1 must-have capability scope
-  Capability 1-8
-  Covers MVP Cases A-H
-
-验收方式
-  Executable Semantic Capability Spec
-  it.effect acceptance tests
-  Schema decode fixtures
-  regression rerun assertions
-```
-
-进入 to-prd 前还需要补齐的编辑项：
-
-```text
-B1 PRD 形状
-  需要把本对齐文档改写为 PRD 结构：
-  Problem Statement
-  Solution
-  User Stories
-  V1 Scope
-  Non-goals
-  Implementation Decisions
-  Testing Decisions
-  Acceptance Criteria
-
-B2 每条 capability 的 fixture / acceptance
-  需要为每条 slice 写 1-2 个具体输入、期望 structured artifact 和失败/未知状态。
-  这不是新理论问题，是 PRD/issue 材料化工作。
-
-B3 issue body 字段
-  需要固定 issue body：
-  What to build
-  Blocked by
-  Theory invariant refs
-  Fixture inputs
-  Expected structured artifacts
-  Acceptance criteria
-  Regression assertions
-  Effect-specific acceptance
-  Verify commands
-  Labels
-
-B4 Effect-specific acceptance
-  每条 capability 需要显式包括：
-  Schema decode / encode fixture
-  malformed input decode failure
-  typed error union assertion
-  Layer 替换测试
-  fresh in-memory ledger or explicit reset
-  append-only events rebuild derived views
-  it.effect + assert
-  pnpm verify
-```
-
-不再作为 to-prd block 的事项：
-
-```text
-package public API 精确命名
-  放入第一条 scaffold/capability issue 或 PRD Implementation Decisions 的高层约束。
-
-PRD 发布位置
-  issue / PRD 统一走 sayoriqwq/harmony GitHub Issues；缺的是 issue body 字段和 labels。
-```
-
-不再需要继续追问的内容：
+## 不再需要继续追问的内容
 
 ```text
 是否 headless
@@ -1107,4 +1038,6 @@ PRD 发布位置
 是否 vertical issue slicing
 ```
 
-结论：理论到实现的核心问题已经差不多了；当前不是 blocked，而是 **ready with edits**。下一步应做 PRD materialization：把本对齐文档改写成 PRD 结构，并给 8 条 must-have capability 补 fixture、验收断言、依赖和 issue 字段。
+结论：理论到实现的核心问题已经完成第一轮闭环。当前状态不是 to-prd blocked，
+而是进入 post-V1-headless follow-up：补 durable ledger、真实 Provider、CLI/API/UI 等后续边界时，
+继续服从本文和 ADR 的 Effect-first、Schema-first、vertical slice 约束。

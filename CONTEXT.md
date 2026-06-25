@@ -55,9 +55,13 @@ Harmony 是一个早期设计仓库，目标是定义一个可迭代、Vocabular
 - `docs/first-phase/mvp-loop-principles.md`：L2 第一阶段落地原则，说明如何用最小机制跑通闭环。
 - `docs/first-phase/semantic-system-principles-v0.1.md`：L3 当前权威规范，固定原则、不变量、MVP 验收和重大变更规则。
 - `docs/first-phase/v1-effect-implementation-alignment.md`：V1 PRD 和 issue 派发前的实现对齐材料。
+- `docs/first-phase/v1-implementation-status.md`：当前 V1 headless core 的实现状态、已关闭 issue 和剩余缺口。
+- `docs/first-phase/v1-capability-fixtures.md`：V1 capability fixture、acceptance test 和核心输出映射。
 - `docs/adr/`：已经接受且会约束后续实现的架构取舍。
 - `docs/engineering/effect.md`：本仓库编写 Effect 代码的工程入口和 harness 阅读顺序。
 - `docs/engineering/file-organization.md`：本仓库 package 入口、无 barrel 和碎文件组织规则。
+- `docs/engineering/package-exports.md`：显式 package subpath export policy。
+- `docs/engineering/v1-usage.md`：当前 headless core 的 Effect Layer 组合和 schema decode 调用方式。
 
 ## ADR
 
