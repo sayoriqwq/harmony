@@ -7,8 +7,9 @@ Harmony will postpone a custom Semantic Workbench and use Codex app as the V1.1 
 Build V1.1 as a Codex-hosted Semantic Runtime:
 
 - A Codex plugin packages hooks, skills, and an MCP server.
-- `UserPromptSubmit` hook becomes the semantic prompt gate.
-- `PreToolUse` hook becomes the action gate for prohibited behavior.
+- `UserPromptSubmit` hook becomes the semantic prompt guardrail.
+- `PreToolUse` hook becomes a supported-path action guardrail, not a complete enforcement boundary.
+- Hooks and MCP server call the same Runtime Facade but do not share in-memory runtime truth.
 - MCP exposes a small facade over the existing headless runtime.
 - Codex threads and artifacts replace the first version of a custom workbench UI.
 - SQLite append-only ledger becomes the runtime persistence target.
@@ -26,9 +27,10 @@ This preserves the core boundary:
 ## Consequences
 
 - V1.1 issues should target plugin, hook, MCP, ledger, and trace artifact seams instead of React workbench pages.
-- Prompt and tool gates must be implemented as hard runtime hooks where possible, not merely as skill instructions.
+- Prompt and tool guardrails must be implemented as hooks where possible, not merely as skill instructions.
+- All authority-changing commands must be validated again by the core; hook approval is never sufficient.
 - Domain activation must be scoped to user, project, and session/thread; it cannot be a global mutable flag.
-- Human-readable files under `.semantic/` are projections for review, not the source of runtime truth.
+- Explicit exports are review snapshots only, not the source of runtime truth.
 - Publication still requires the core patch and regression gate.
 
 ## Alternatives Rejected

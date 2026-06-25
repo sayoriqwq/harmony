@@ -37,11 +37,11 @@ GitHub PRD：`sayoriqwq/harmony#1`。
 - HTTP、CLI、UI。
 - 真实 LLM Provider。
 - 生产数据库、队列或事件日志。
-- file-backed durable ledger Layer。
+- durable ledger runtime Layer。
 
 ## 当前剩余工程缺口
 
-file-backed durable ledger 是下一阶段缺口，已记录为 GitHub issue `#10`。
+durable ledger runtime contract 是下一阶段缺口，已记录为 GitHub issue `#10`。
 当前 `SemanticLedger.layerInMemory` 证明的是 append-only ledger 语义和 derived current view，
 而不是跨进程持久审计。
 
