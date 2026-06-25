@@ -1,22 +1,15 @@
-import type {
-  LedgerRecordType as LedgerRecord,
-  PackageVersionPublishedRecord,
-} from '@harmony/semantic-model'
+import type { LedgerRecordType as LedgerRecord, PackageVersionPublishedRecord } from '@harmony/semantic-model/schema/ledger-record'
 import { assert, describe, it } from '@effect/vitest'
-import { GlossaryPackageWorkflow, layerInMemory, SemanticLedger } from '@harmony/headless-runtime'
-import {
-  CompileAndPublishResult,
-  EvidenceSource,
-  LedgerRecord as LedgerRecordSchema,
-  PackageCurrentView,
-  PackageVersion,
-  PublishedSemanticPackage,
-  SemanticPackageDraft,
-  VocabularyInput,
-} from '@harmony/semantic-model'
+import { SemanticLedger } from '@harmony/headless-runtime/ledger'
+import { GlossaryPackageWorkflow, layerInMemory } from '@harmony/headless-runtime/runtime/glossary-package-workflow'
+import { EvidenceSource, VocabularyInput } from '@harmony/semantic-model/schema/input'
+import { LedgerRecord as LedgerRecordSchema } from '@harmony/semantic-model/schema/ledger-record'
+import { PackageVersion, PublishedSemanticPackage, SemanticPackageDraft } from '@harmony/semantic-model/schema/package'
+import { CompileAndPublishResult, PackageCurrentView } from '@harmony/semantic-model/schema/workflow-result'
 import { Effect, Schema } from 'effect'
 
 const refundText = '退款：将已支付金额返还给用户'
+const chargebackText = '拒付：持卡人发起的支付争议'
 
 const glossaryFixture = {
   id: 'vocabulary-input:refund-glossary',
@@ -42,6 +35,34 @@ const glossaryFixture = {
       startOffset: 3,
       endOffset: 14,
       text: '将已支付金额返还给用户',
+    },
+  ],
+}
+
+const otherGlossaryFixture = {
+  id: 'vocabulary-input:chargeback-glossary',
+  inputKind: 'vocabulary',
+  content: chargebackText,
+  vocabularyKind: 'domain',
+  namespace: 'domain.chargeback',
+  spans: [
+    {
+      id: 'source-span:chargeback-entry',
+      startOffset: 0,
+      endOffset: 14,
+      text: chargebackText,
+    },
+    {
+      id: 'source-span:chargeback-term',
+      startOffset: 0,
+      endOffset: 2,
+      text: '拒付',
+    },
+    {
+      id: 'source-span:chargeback-definition',
+      startOffset: 3,
+      endOffset: 14,
+      text: '持卡人发起的支付争议',
     },
   ],
 }
@@ -156,5 +177,24 @@ describe('glossary Vocabulary Source workflow', () => {
       assert.ok(firstPublishRecord)
       assert.strictEqual(firstPublishRecord.packageVersion.version, 'v1')
       assert.strictEqual(firstPublishRecord.publishedPackage.artifacts.definitions[0]?.text, definition.text)
+    }).pipe(Effect.provide(layerInMemory)))
+
+  it.effect('keeps PackageCurrentView provenance scoped to the requested package', () =>
+    Effect.gen(function* () {
+      const workflow = yield* GlossaryPackageWorkflow
+      const ledger = yield* SemanticLedger
+      const refundInput = yield* Schema.decodeUnknownEffect(VocabularyInput)(glossaryFixture)
+      const otherInput = yield* Schema.decodeUnknownEffect(VocabularyInput)(otherGlossaryFixture)
+
+      const refundResult = yield* workflow.compileAndPublish(refundInput)
+      const otherResult = yield* workflow.compileAndPublish(otherInput)
+      const refundView = yield* ledger.currentPackageView(refundResult.packageVersion.packageId)
+
+      assert.deepStrictEqual(refundView.sourceIds, [refundResult.evidenceSource.id])
+      assert.deepStrictEqual(refundView.ledgerRecordIds, refundResult.currentView.ledgerRecordIds)
+      assert.isFalse(refundView.sourceIds.includes(otherResult.evidenceSource.id))
+      assert.isFalse(
+        refundView.ledgerRecordIds.some(recordId => otherResult.currentView.ledgerRecordIds.includes(recordId)),
+      )
     }).pipe(Effect.provide(layerInMemory)))
 })

@@ -3,6 +3,23 @@
   "type": "module",
   "private": true,
   "exports": {
-    ".": "./src/index.ts"
+    "./runtime/constants": "./src/runtime/constants.ts",
+    "./runtime/errors": "./src/runtime/errors.ts",
+    "./runtime/glossary-package-workflow": "./src/runtime/glossary-package-workflow.ts",
+    "./runtime/semantic-kernel": "./src/runtime/semantic-kernel.ts",
+    "./runtime/active-environment-builder": "./src/runtime/active-environment-builder.ts",
+    "./runtime/semantic-parser": "./src/runtime/semantic-parser.ts",
+    "./runtime/request-decision-engine": "./src/runtime/request-decision-engine.ts",
+    "./runtime/prompt-clarification-workflow": "./src/runtime/prompt-clarification-workflow.ts",
+    "./runtime/correction-workflow": "./src/runtime/correction-workflow.ts",
+    "./runtime/correction-diagnosis-workflow": "./src/runtime/correction-diagnosis-workflow.ts",
+    "./runtime/semantic-patch-publication-workflow": "./src/runtime/semantic-patch-publication-workflow.ts",
+    "./runtime/document-semantic-lint-workflow": "./src/runtime/document-semantic-lint-workflow.ts",
+    "./runtime/layers": "./src/runtime/layers.ts",
+    "./ledger": "./src/runtime/ledger.ts"
+  },
+  "dependencies": {
+    "@harmony/semantic-model": "workspace:*",
+    "effect": "catalog:"
   }
 }

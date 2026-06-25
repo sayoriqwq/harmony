@@ -5,34 +5,27 @@ import type {
   LedgerRecordType as LedgerRecord,
   PromptInputCapturedRecord,
   SemanticIrProducedRecord,
-} from '@harmony/semantic-model'
+} from '@harmony/semantic-model/schema/ledger-record'
 import { assert, describe, it } from '@effect/vitest'
+import { SemanticLedger } from '@harmony/headless-runtime/ledger'
+import { ActiveEnvironmentBuilder } from '@harmony/headless-runtime/runtime/active-environment-builder'
+import { CorrectionWorkflow } from '@harmony/headless-runtime/runtime/correction-workflow'
+import { GlossaryPackageWorkflow } from '@harmony/headless-runtime/runtime/glossary-package-workflow'
+import { layerInMemoryWithCorrection } from '@harmony/headless-runtime/runtime/layers'
+import { PromptClarificationWorkflow } from '@harmony/headless-runtime/runtime/prompt-clarification-workflow'
+import { Case, CaseSemanticEdit as CaseSemanticEditSchema, SelectRequestInterpretationEdit } from '@harmony/semantic-model/schema/case'
+import { ActiveEnvironmentBuildRequest, LocalSemanticContext } from '@harmony/semantic-model/schema/environment'
+import { PackageId } from '@harmony/semantic-model/schema/ids'
 import {
-  ActiveEnvironmentBuilder,
-  CorrectionWorkflow,
-  GlossaryPackageWorkflow,
-  layerInMemoryWithCorrection,
-  PromptClarificationWorkflow,
-  SemanticLedger,
-} from '@harmony/headless-runtime'
-import {
-  ActiveEnvironmentBuildRequest,
-  Case,
-  CaseOpenResult,
-  CaseSemanticEditApplicationResult,
-  CaseSemanticEdit as CaseSemanticEditSchema,
   Correction,
-  CorrectionCaptureResult,
   CorrectionEvidenceSource,
   EvidenceRef,
-  LedgerRecord as LedgerRecordSchema,
-  LocalSemanticContext,
-  PackageId,
   PromptInput,
-  SelectRequestInterpretationEdit,
-  SemanticIr,
   VocabularyInput,
-} from '@harmony/semantic-model'
+} from '@harmony/semantic-model/schema/input'
+import { LedgerRecord as LedgerRecordSchema } from '@harmony/semantic-model/schema/ledger-record'
+import { SemanticIr } from '@harmony/semantic-model/schema/semantic-ir'
+import { CaseOpenResult, CaseSemanticEditApplicationResult, CorrectionCaptureResult } from '@harmony/semantic-model/schema/workflow-result'
 import { Effect, Schema } from 'effect'
 
 const basePackageId = Schema.decodeUnknownSync(PackageId)('package:base.correction')

@@ -3,28 +3,25 @@ import type {
   LedgerRecordType as LedgerRecord,
   SemanticIrProducedRecord,
   SemanticLintReportProducedRecord,
-} from '@harmony/semantic-model'
+} from '@harmony/semantic-model/schema/ledger-record'
 import { assert, describe, it } from '@effect/vitest'
+import { SemanticLedger } from '@harmony/headless-runtime/ledger'
+import { ActiveEnvironmentBuilder } from '@harmony/headless-runtime/runtime/active-environment-builder'
+import { DocumentSemanticLintWorkflow } from '@harmony/headless-runtime/runtime/document-semantic-lint-workflow'
+import { GlossaryPackageWorkflow } from '@harmony/headless-runtime/runtime/glossary-package-workflow'
+import { layerInMemoryWithDocumentSemanticLint } from '@harmony/headless-runtime/runtime/layers'
+import { ActiveEnvironmentBuildRequest, LocalSemanticContext } from '@harmony/semantic-model/schema/environment'
+import { PackageId } from '@harmony/semantic-model/schema/ids'
 import {
-  ActiveEnvironmentBuilder,
-  DocumentSemanticLintWorkflow,
-  GlossaryPackageWorkflow,
-  layerInMemoryWithDocumentSemanticLint,
-  SemanticLedger,
-} from '@harmony/headless-runtime'
-import {
-  ActiveEnvironmentBuildRequest,
   DocumentEvidenceSource,
   DocumentInput,
-  DocumentSemanticLintWorkflowResult,
-  LedgerRecord as LedgerRecordSchema,
-  LocalSemanticContext,
-  PackageId,
   SemanticInput,
-  SemanticIr,
-  SemanticLintReport,
   VocabularyInput,
-} from '@harmony/semantic-model'
+} from '@harmony/semantic-model/schema/input'
+import { LedgerRecord as LedgerRecordSchema } from '@harmony/semantic-model/schema/ledger-record'
+import { SemanticLintReport } from '@harmony/semantic-model/schema/lint'
+import { SemanticIr } from '@harmony/semantic-model/schema/semantic-ir'
+import { DocumentSemanticLintWorkflowResult } from '@harmony/semantic-model/schema/workflow-result'
 import { Effect, Schema } from 'effect'
 
 const basePackageId = Schema.decodeUnknownSync(PackageId)('package:base.document-lint')

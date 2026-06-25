@@ -1,30 +1,22 @@
-import type {
-  LedgerRecordType as LedgerRecord,
-  PromptInputCapturedRecord,
-  SemanticIrProducedRecord,
-} from '@harmony/semantic-model'
+import type { LedgerRecordType as LedgerRecord, PromptInputCapturedRecord, SemanticIrProducedRecord } from '@harmony/semantic-model/schema/ledger-record'
 import { assert, describe, it } from '@effect/vitest'
+import { SemanticLedger } from '@harmony/headless-runtime/ledger'
+import { ActiveEnvironmentBuilder } from '@harmony/headless-runtime/runtime/active-environment-builder'
+import { GlossaryPackageWorkflow } from '@harmony/headless-runtime/runtime/glossary-package-workflow'
+import { layerInMemoryWithPromptClarification } from '@harmony/headless-runtime/runtime/layers'
+import { PromptClarificationWorkflow } from '@harmony/headless-runtime/runtime/prompt-clarification-workflow'
+import { ActiveEnvironmentBuildRequest, LocalSemanticContext } from '@harmony/semantic-model/schema/environment'
+import { PackageId } from '@harmony/semantic-model/schema/ids'
 import {
-  ActiveEnvironmentBuilder,
-  GlossaryPackageWorkflow,
-  layerInMemoryWithPromptClarification,
-  PromptClarificationWorkflow,
-  SemanticLedger,
-} from '@harmony/headless-runtime'
-import {
-  ActiveEnvironmentBuildRequest,
-  ClarificationDecision,
-  LedgerRecord as LedgerRecordSchema,
-  LocalSemanticContext,
-  PackageId,
-  PromptClarificationWorkflowResult,
   PromptEvidenceSource,
   PromptInput,
-  RequestDecision as RequestDecisionSchema,
   SemanticInput,
-  SemanticIr,
   VocabularyInput,
-} from '@harmony/semantic-model'
+} from '@harmony/semantic-model/schema/input'
+import { LedgerRecord as LedgerRecordSchema } from '@harmony/semantic-model/schema/ledger-record'
+import { ClarificationDecision, RequestDecision as RequestDecisionSchema } from '@harmony/semantic-model/schema/request-decision'
+import { SemanticIr } from '@harmony/semantic-model/schema/semantic-ir'
+import { PromptClarificationWorkflowResult } from '@harmony/semantic-model/schema/workflow-result'
 import { Effect, Schema } from 'effect'
 
 const basePackageId = Schema.decodeUnknownSync(PackageId)('package:base.review')

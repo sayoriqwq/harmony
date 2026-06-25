@@ -4,34 +4,29 @@ import type {
   NoSemanticPatchCandidateRecord,
   PackageVersionPublishedRecord,
   SemanticPatchCandidateProposedRecord,
-} from '@harmony/semantic-model'
+} from '@harmony/semantic-model/schema/ledger-record'
 import { assert, describe, it } from '@effect/vitest'
+import { SemanticLedger } from '@harmony/headless-runtime/ledger'
+import { ActiveEnvironmentBuilder } from '@harmony/headless-runtime/runtime/active-environment-builder'
+import { CorrectionDiagnosisWorkflow } from '@harmony/headless-runtime/runtime/correction-diagnosis-workflow'
+import { CorrectionWorkflow } from '@harmony/headless-runtime/runtime/correction-workflow'
+import { GlossaryPackageWorkflow } from '@harmony/headless-runtime/runtime/glossary-package-workflow'
+import { layerInMemoryWithCorrectionDiagnosis } from '@harmony/headless-runtime/runtime/layers'
+import { PromptClarificationWorkflow } from '@harmony/headless-runtime/runtime/prompt-clarification-workflow'
+import { Case, SelectRequestInterpretationEdit } from '@harmony/semantic-model/schema/case'
+import { CorrectionDiagnosis } from '@harmony/semantic-model/schema/correction-diagnosis'
+import { CorrectionDiagnosisGateResult, SemanticPatchCandidateProposalResult } from '@harmony/semantic-model/schema/correction-gate'
+import { ActiveEnvironmentBuildRequest, LocalSemanticContext } from '@harmony/semantic-model/schema/environment'
+import { PackageId } from '@harmony/semantic-model/schema/ids'
 import {
-  ActiveEnvironmentBuilder,
-  CorrectionDiagnosisWorkflow,
-  CorrectionWorkflow,
-  GlossaryPackageWorkflow,
-  layerInMemoryWithCorrectionDiagnosis,
-  PromptClarificationWorkflow,
-  SemanticLedger,
-} from '@harmony/headless-runtime'
-import {
-  ActiveEnvironmentBuildRequest,
-  Case,
-  CorrectionDiagnosis,
-  CorrectionDiagnosisGateResult,
-  CorrectionDiagnosisWorkflowResult,
   CorrectionEvidenceSource,
   EvidenceRef,
-  LedgerRecord as LedgerRecordSchema,
-  LocalSemanticContext,
-  PackageId,
   PromptInput,
-  SelectRequestInterpretationEdit,
-  SemanticPatchCandidate,
-  SemanticPatchCandidateProposalResult,
   VocabularyInput,
-} from '@harmony/semantic-model'
+} from '@harmony/semantic-model/schema/input'
+import { LedgerRecord as LedgerRecordSchema } from '@harmony/semantic-model/schema/ledger-record'
+import { SemanticPatchCandidate } from '@harmony/semantic-model/schema/semantic-patch'
+import { CorrectionDiagnosisWorkflowResult } from '@harmony/semantic-model/schema/workflow-result'
 import { Effect, Schema } from 'effect'
 
 const basePackageId = Schema.decodeUnknownSync(PackageId)('package:base.correction-diagnosis')

@@ -1,22 +1,15 @@
-import type { LedgerRecordType as LedgerRecord } from '@harmony/semantic-model'
+import type { LedgerRecordType as LedgerRecord } from '@harmony/semantic-model/schema/ledger-record'
 import { assert, describe, it } from '@effect/vitest'
-import {
-  ActiveEnvironmentBuilder,
-  GlossaryPackageWorkflow,
-  layerInMemoryWithActiveEnvironment,
-  SemanticLedger,
-} from '@harmony/headless-runtime'
-import {
-  ActiveEnvironmentBuildRequest,
-  ActiveEnvironmentBuildResult,
-  ActiveSemanticEnvironment,
-  ActiveSemanticEnvironmentConstructedRecord,
-  LedgerRecord as LedgerRecordSchema,
-  LocalSemanticContext,
-  PackageId,
-  SemanticKernelIdentity,
-  VocabularyInput,
-} from '@harmony/semantic-model'
+import { SemanticLedger } from '@harmony/headless-runtime/ledger'
+import { ActiveEnvironmentBuilder } from '@harmony/headless-runtime/runtime/active-environment-builder'
+import { GlossaryPackageWorkflow } from '@harmony/headless-runtime/runtime/glossary-package-workflow'
+import { layerInMemoryWithActiveEnvironment } from '@harmony/headless-runtime/runtime/layers'
+import { ActiveEnvironmentBuildRequest, ActiveSemanticEnvironment, LocalSemanticContext } from '@harmony/semantic-model/schema/environment'
+import { PackageId } from '@harmony/semantic-model/schema/ids'
+import { VocabularyInput } from '@harmony/semantic-model/schema/input'
+import { ActiveSemanticEnvironmentConstructedRecord, LedgerRecord as LedgerRecordSchema } from '@harmony/semantic-model/schema/ledger-record'
+import { SemanticKernelIdentity } from '@harmony/semantic-model/schema/package'
+import { ActiveEnvironmentBuildResult } from '@harmony/semantic-model/schema/workflow-result'
 import { Effect, Schema } from 'effect'
 
 const baseDefinition = '将已支付金额返还给用户'

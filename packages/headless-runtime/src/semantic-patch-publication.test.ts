@@ -2,43 +2,39 @@ import type {
   LedgerRecordType as LedgerRecord,
   PackageVersionPublishedRecord,
   RegressionRunCompletedRecord,
-  RegressionRunResult,
   SemanticPatchCandidateProposedRecord,
-
   SemanticPatchCandidatePublishedRecord,
-} from '@harmony/semantic-model'
+} from '@harmony/semantic-model/schema/ledger-record'
+import type { RegressionRunResult } from '@harmony/semantic-model/schema/workflow-result'
 import { assert, describe, it } from '@effect/vitest'
+import { SemanticLedger } from '@harmony/headless-runtime/ledger'
+import { ActiveEnvironmentBuilder } from '@harmony/headless-runtime/runtime/active-environment-builder'
+import { CorrectionDiagnosisWorkflow } from '@harmony/headless-runtime/runtime/correction-diagnosis-workflow'
+import { CorrectionWorkflow } from '@harmony/headless-runtime/runtime/correction-workflow'
+import { GlossaryPackageWorkflow } from '@harmony/headless-runtime/runtime/glossary-package-workflow'
+import { layerInMemoryWithPatchPublication } from '@harmony/headless-runtime/runtime/layers'
+import { PromptClarificationWorkflow } from '@harmony/headless-runtime/runtime/prompt-clarification-workflow'
+import { SemanticPatchPublicationWorkflow } from '@harmony/headless-runtime/runtime/semantic-patch-publication-workflow'
+import { Case, SelectRequestInterpretationEdit } from '@harmony/semantic-model/schema/case'
+import { ActiveEnvironmentBuildRequest, LocalSemanticContext } from '@harmony/semantic-model/schema/environment'
+import { PackageId } from '@harmony/semantic-model/schema/ids'
 import {
-  ActiveEnvironmentBuilder,
-  CorrectionDiagnosisWorkflow,
-  CorrectionWorkflow,
-  GlossaryPackageWorkflow,
-  layerInMemoryWithPatchPublication,
-  PromptClarificationWorkflow,
-  SemanticLedger,
-  SemanticPatchPublicationWorkflow,
-} from '@harmony/headless-runtime'
-import {
-  ActiveEnvironmentBuildRequest,
-  Case,
   Correction,
   EvidenceRef,
-  LedgerRecord as LedgerRecordSchema,
-  LocalSemanticContext,
+  PromptInput,
+  VocabularyInput,
+} from '@harmony/semantic-model/schema/input'
+import { LedgerRecord as LedgerRecordSchema, RegressionCaseCreatedRecord } from '@harmony/semantic-model/schema/ledger-record'
+import {
   PackageDefinitionContainsAssertion,
   PackageDefinitionEqualsAssertion,
-  PackageId,
-  PromptInput,
   RegressionCase,
-  RegressionCaseCreatedRecord,
   RegressionRun,
   RequestClarificationExpectedAssertion,
-  SelectRequestInterpretationEdit,
-  SemanticPatchCandidate,
-  SemanticPatchPublicationResult,
   SemanticUnknownExpectedAssertion,
-  VocabularyInput,
-} from '@harmony/semantic-model'
+} from '@harmony/semantic-model/schema/regression'
+import { SemanticPatchCandidate } from '@harmony/semantic-model/schema/semantic-patch'
+import { SemanticPatchPublicationResult } from '@harmony/semantic-model/schema/workflow-result'
 import { Effect, Schema } from 'effect'
 
 const basePackageId = Schema.decodeUnknownSync(PackageId)('package:base.patch-publication')
@@ -361,6 +357,13 @@ describe('Domain Semantic Patch Candidate publication workflow', () => {
       assert.notStrictEqual(passingRun.regressionRun.candidatePackageVersionId, domainPackage.packageVersion.id)
       assert.strictEqual(passingRun.patchCandidate.lifecycle, 'proposed')
       assert.strictEqual(passingRun.patchCandidate.state, 'regression_passed')
+      const passingRerun = yield* publicationWorkflow.runRegression(regressionCase.regressionCase, patchCandidate)
+      assert.strictEqual(passingRerun.regressionRun.outcome, 'passed')
+      assert.notStrictEqual(passingRerun.regressionRun.id, passingRun.regressionRun.id)
+      assert.strictEqual(
+        passingRerun.regressionRun.candidatePackageVersionId,
+        passingRun.regressionRun.candidatePackageVersionId,
+      )
 
       const publication = yield* publicationWorkflow.publishCandidate(patchCandidate)
       yield* roundTripPatchPublicationOutput(failedRun, publication)
@@ -374,7 +377,7 @@ describe('Domain Semantic Patch Candidate publication workflow', () => {
       assert.strictEqual(publication.patchCandidate.lifecycle, 'published')
       assert.strictEqual(publication.patchCandidate.state, 'published')
       assert.strictEqual(publication.patchCandidatePublishedRecord.packageVersionId, publication.packageVersion.id)
-      assert.strictEqual(publication.patchCandidatePublishedRecord.regressionRunId, passingRun.regressionRun.id)
+      assert.strictEqual(publication.patchCandidatePublishedRecord.regressionRunId, passingRerun.regressionRun.id)
 
       const newDefinition = firstOf(publication.publishedPackage.artifacts.definitions, 'new definition')
       assert.isTrue(newDefinition.text.includes('corrected requests must validate without rewriting target content'))
@@ -391,8 +394,17 @@ describe('Domain Semantic Patch Candidate publication workflow', () => {
       assert.strictEqual(publicationSource.sourceCaseSemanticEditId, application.edit.id)
       assert.strictEqual(publicationSource.sourceDiagnosisId, diagnosisResult.diagnosis.id)
       assert.strictEqual(publicationSource.regressionCaseId, passingRun.regressionRun.regressionCaseId)
-      assert.strictEqual(publicationSource.regressionRunId, passingRun.regressionRun.id)
+      assert.strictEqual(publicationSource.regressionRunId, passingRerun.regressionRun.id)
       assert.strictEqual(publicationSource.previousPackageVersionId, domainPackage.packageVersion.id)
+
+      const duplicatePublicationBlocked = yield* publicationWorkflow.publishCandidate(patchCandidate).pipe(
+        Effect.map(() => false),
+        Effect.catchTag(
+          'PatchPublicationBlocked',
+          error => Effect.succeed(error.message === 'SemanticPatchCandidate has already been published.'),
+        ),
+      )
+      assert.strictEqual(duplicatePublicationBlocked, true)
 
       const allRecords = yield* ledger.records
       const packagePublishRecords = allRecords.filter(isPackageVersionPublishedRecord)
@@ -413,7 +425,7 @@ describe('Domain Semantic Patch Candidate publication workflow', () => {
       assert.strictEqual(newDomainPublishRecord.packageVersion.version, 'v2')
       assert.strictEqual(allRecords.filter(isPatchCandidateRecord).length, 1)
       assert.strictEqual(allRecords.filter(isRegressionCaseRecord).length, 1)
-      assert.strictEqual(allRecords.filter(isRegressionRunRecord).length, 2)
+      assert.strictEqual(allRecords.filter(isRegressionRunRecord).length, 3)
       assert.strictEqual(allRecords.filter(isPatchCandidatePublishedRecord).length, 1)
       assert.strictEqual(
         allRecords.findIndex(isRegressionRunRecord) < allRecords.findIndex(isPatchCandidatePublishedRecord),
