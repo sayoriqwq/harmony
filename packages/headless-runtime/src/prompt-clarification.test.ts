@@ -18,84 +18,15 @@ import { ClarificationDecision, RequestDecision as RequestDecisionSchema } from 
 import { SemanticIr } from '@harmony/semantic-model/schema/semantic-ir'
 import { PromptClarificationWorkflowResult } from '@harmony/semantic-model/schema/workflow-result'
 import { Effect, Schema } from 'effect'
+import {
+  baseGlossaryFixture,
+  localContextFixture,
+  promptFixture,
+  promptText,
+  promptWithDocumentOnlyField,
+} from './fixtures/prompt-clarification.js'
 
 const basePackageId = Schema.decodeUnknownSync(PackageId)('package:base.review')
-const promptText = 'check this document; do not edit it'
-const targetDocumentRef = 'semantic-input:document-under-review'
-
-const baseGlossaryFixture = {
-  id: 'vocabulary-input:base-review',
-  inputKind: 'vocabulary',
-  content: 'document：content supplied as the request target',
-  vocabularyKind: 'base',
-  namespace: 'base.review',
-  spans: [
-    {
-      id: 'source-span:base-review:entry',
-      startOffset: 0,
-      endOffset: 47,
-      text: 'document：content supplied as the request target',
-    },
-    {
-      id: 'source-span:base-review:term',
-      startOffset: 0,
-      endOffset: 8,
-      text: 'document',
-    },
-    {
-      id: 'source-span:base-review:definition',
-      startOffset: 9,
-      endOffset: 47,
-      text: 'content supplied as the request target',
-    },
-  ],
-}
-
-const localContextFixture = {
-  id: 'local-context:prompt-clarification',
-  contextKind: 'case-local',
-  description: 'Prompt action ambiguity fixture.',
-  evidenceRefs: [],
-}
-
-const promptFixture = {
-  id: 'semantic-input:prompt-check-document',
-  inputKind: 'prompt',
-  content: promptText,
-  promptRole: 'user_request',
-  targetRefs: [targetDocumentRef],
-  spans: [
-    {
-      id: 'source-span:prompt-check-document:full',
-      startOffset: 0,
-      endOffset: 35,
-      text: promptText,
-    },
-    {
-      id: 'source-span:prompt-check-document:action',
-      startOffset: 0,
-      endOffset: 5,
-      text: 'check',
-    },
-    {
-      id: 'source-span:prompt-check-document:target',
-      startOffset: 6,
-      endOffset: 19,
-      text: 'this document',
-    },
-    {
-      id: 'source-span:prompt-check-document:prohibited-action',
-      startOffset: 21,
-      endOffset: 35,
-      text: 'do not edit it',
-    },
-  ],
-}
-
-const promptWithDocumentOnlyField = {
-  ...promptFixture,
-  declaredCompleteness: 'complete',
-}
 
 function firstOf<A>(items: ReadonlyArray<A>, label: string): A {
   const value = items[0]
