@@ -4,7 +4,7 @@ catalogMode: manual
 
 cleanupUnusedCatalogs: true
 
-dedupeDirectDeps: true
+dedupeDirectDeps: false
 
 optimisticRepeatInstall: true
 
