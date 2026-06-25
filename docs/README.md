@@ -27,6 +27,7 @@ V1 实现对齐材料
 
 工程实践
 ├── docs/engineering/effect.md
+├── docs/engineering/codex-hosted-semantic-runtime.md
 ├── docs/engineering/file-organization.md
 ├── docs/engineering/package-exports.md
 └── docs/engineering/v1-usage.md
@@ -52,11 +53,13 @@ V1 实现对齐材料
    实现前读取相关 ADR，确认已经接受的架构取舍。
 9. `docs/engineering/effect.md`
    编写 Effect 代码时读取，确认 harness 入口、默认写法、测试规则和验证命令。
-10. `docs/engineering/file-organization.md`
+10. `docs/engineering/codex-hosted-semantic-runtime.md`
+   规划 Codex plugin、hook、MCP、trace artifact 或 dogfood 入口前读取。
+11. `docs/engineering/file-organization.md`
    新增或拆分 package/module 前读取，确认无 barrel、显式子路径和碎文件组织规则。
-11. `docs/engineering/package-exports.md`
+12. `docs/engineering/package-exports.md`
    新增 package export 或调整 import surface 前读取，确认 public subpath policy。
-12. `docs/engineering/v1-usage.md`
+13. `docs/engineering/v1-usage.md`
    调用 V1 headless core 前读取，确认 Effect Layer 组合和 schema decode 方式。
 
 ## 权威关系
@@ -77,6 +80,7 @@ V1 实现对齐材料
 - `docs/adr/` 只记录已经接受且会约束后续实现的架构取舍。
 - `engineering/effect.md` 只保存本仓库编写 Effect 代码的工程入口，不替代
   `effect-harness` 或 pinned official Effect source。
+- `engineering/codex-hosted-semantic-runtime.md` 只保存 V1.1 Codex-hosted runtime 架构，不替代 L3 语义规范。
 - `engineering/file-organization.md` 只保存本仓库 package 入口和文件组织规则，不替代领域规范。
 - `engineering/package-exports.md` 只保存 package subpath export policy，不替代领域规范。
 - `engineering/v1-usage.md` 只说明当前 headless core 的调用方式，不定义新产品范围。

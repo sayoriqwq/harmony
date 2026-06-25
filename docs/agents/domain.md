@@ -27,6 +27,7 @@
 - `docs/first-phase/v1-implementation-status.md`
 - `docs/first-phase/v1-capability-fixtures.md`
 - `docs/engineering/effect.md`
+- `docs/engineering/codex-hosted-semantic-runtime.md`
 - `docs/engineering/file-organization.md`
 - `docs/engineering/package-exports.md`
 - `docs/engineering/v1-usage.md`

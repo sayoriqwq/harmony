@@ -59,6 +59,7 @@ Harmony 是一个早期设计仓库，目标是定义一个可迭代、Vocabular
 - `docs/first-phase/v1-capability-fixtures.md`：V1 capability fixture、acceptance test 和核心输出映射。
 - `docs/adr/`：已经接受且会约束后续实现的架构取舍。
 - `docs/engineering/effect.md`：本仓库编写 Effect 代码的工程入口和 harness 阅读顺序。
+- `docs/engineering/codex-hosted-semantic-runtime.md`：V1.1 使用 Codex app 作为交互、审查和自动化宿主的架构。
 - `docs/engineering/file-organization.md`：本仓库 package 入口、无 barrel 和碎文件组织规则。
 - `docs/engineering/package-exports.md`：显式 package subpath export policy。
 - `docs/engineering/v1-usage.md`：当前 headless core 的 Effect Layer 组合和 schema decode 调用方式。
@@ -73,3 +74,4 @@ Harmony 是一个早期设计仓库，目标是定义一个可迭代、Vocabular
 - `0004-model-correction-evolution-through-diagnosis.md`
 - `0005-split-v1-work-into-vertical-capability-slices.md`
 - `0006-use-explicit-subpath-modules-instead-of-barrels.md`
+- `0007-use-codex-app-as-v1-1-semantic-runtime-host.md`
