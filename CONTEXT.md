@@ -57,6 +57,7 @@ Harmony 是一个早期设计仓库，目标是定义一个可迭代、Vocabular
 - `docs/first-phase/v1-effect-implementation-alignment.md`：V1 PRD 和 issue 派发前的实现对齐材料。
 - `docs/adr/`：已经接受且会约束后续实现的架构取舍。
 - `docs/engineering/effect.md`：本仓库编写 Effect 代码的工程入口和 harness 阅读顺序。
+- `docs/engineering/file-organization.md`：本仓库 package 入口、无 barrel 和碎文件组织规则。
 
 ## ADR
 
@@ -67,3 +68,4 @@ Harmony 是一个早期设计仓库，目标是定义一个可迭代、Vocabular
 - `0003-separate-evidence-sources-from-structured-semantic-artifacts.md`
 - `0004-model-correction-evolution-through-diagnosis.md`
 - `0005-split-v1-work-into-vertical-capability-slices.md`
+- `0006-use-explicit-subpath-modules-instead-of-barrels.md`

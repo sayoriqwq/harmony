@@ -24,7 +24,8 @@ V1 实现对齐材料
 └── docs/adr/*.md
 
 工程实践
-└── docs/engineering/effect.md
+├── docs/engineering/effect.md
+└── docs/engineering/file-organization.md
 ```
 
 ## 阅读顺序
@@ -43,6 +44,8 @@ V1 实现对齐材料
    实现前读取相关 ADR，确认已经接受的架构取舍。
 7. `docs/engineering/effect.md`
    编写 Effect 代码时读取，确认 harness 入口、默认写法、测试规则和验证命令。
+8. `docs/engineering/file-organization.md`
+   新增或拆分 package/module 前读取，确认无 barrel、显式子路径和碎文件组织规则。
 
 ## 权威关系
 
@@ -60,5 +63,6 @@ V1 实现对齐材料
 - `docs/adr/` 只记录已经接受且会约束后续实现的架构取舍。
 - `engineering/effect.md` 只保存本仓库编写 Effect 代码的工程入口，不替代
   `effect-harness` 或 pinned official Effect source。
+- `engineering/file-organization.md` 只保存本仓库 package 入口和文件组织规则，不替代领域规范。
 
 具体 DSL、Semantic IR Schema、数据库、服务边界、模型调用方式和界面流程，属于下一阶段架构设计文档，不放入当前理论文档。

@@ -25,6 +25,7 @@
 - `docs/first-phase/semantic-system-principles-v0.1.md`
 - `docs/first-phase/v1-effect-implementation-alignment.md`
 - `docs/engineering/effect.md`
+- `docs/engineering/file-organization.md`
 
 ## 使用项目词汇
 

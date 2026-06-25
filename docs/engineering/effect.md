@@ -4,6 +4,9 @@
 `effect-harness` manifest、runtime skill 和 pinned official Effect source；这里保存 target-local
 的阅读顺序、默认写法和验证命令，避免每次都从 harness 文件里重新找入口。
 
+文件组织和 package export 规则见 `docs/engineering/file-organization.md`。Effect 官方源码中的
+barrel 生成策略不是本仓库的本地约束；Harmony 使用显式子路径模块。
+
 ## 权威来源
 
 本仓库的 Effect harness root 记录在根目录 `.effect-harness.json`。
