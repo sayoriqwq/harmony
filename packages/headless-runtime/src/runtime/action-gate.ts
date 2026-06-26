@@ -25,6 +25,11 @@ import { deterministicInstant } from './constants.ts'
 import { ledgerUnavailableIntegrationHealth } from './integration-health.ts'
 import { PromptGateLedger, PromptGateLedgerError } from './prompt-gate-ledger.ts'
 import { RuntimeDataAccessError, RuntimeDataLocator } from './runtime-data-locator.ts'
+import {
+  hasErrorCode,
+  causeMessage as nodeCauseMessage,
+  nodeFileSystemError,
+} from './shared/errors.ts'
 
 export class ActionGateRequest extends Schema.Class<ActionGateRequest>(
   'harmony.headless-runtime/ActionGateRequest',
@@ -63,7 +68,7 @@ const ledgerLockMaxAttempts = 5
 const ledgerBusyRetryAfterMs = 25
 
 function causeMessage(cause: unknown): string {
-  return cause instanceof Error ? cause.message : String(cause)
+  return nodeCauseMessage(cause)
 }
 
 function actionGateLedgerPath(projectDataRoot: string) {
@@ -75,11 +80,11 @@ function actionGateLedgerLockPath(projectDataRoot: string) {
 }
 
 function isNotFound(cause: unknown): boolean {
-  return cause instanceof Error && 'code' in cause && cause.code === 'ENOENT'
+  return hasErrorCode(cause, 'ENOENT')
 }
 
 function isAlreadyExists(cause: unknown): boolean {
-  return cause instanceof Error && 'code' in cause && cause.code === 'EEXIST'
+  return hasErrorCode(cause, 'EEXIST')
 }
 
 function digest(value: string) {
@@ -120,7 +125,7 @@ function acquireActionLedgerLock(lockPath: string) {
     for (let attempt = 0; attempt < ledgerLockMaxAttempts; attempt += 1) {
       const handle = yield* Effect.tryPromise({
         try: () => Fs.open(lockPath, 'wx'),
-        catch: cause => cause,
+        catch: nodeFileSystemError,
       }).pipe(
         Effect.matchEffect({
           onFailure: (cause) => {

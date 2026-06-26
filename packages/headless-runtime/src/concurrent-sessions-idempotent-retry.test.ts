@@ -20,16 +20,17 @@ import {
   SemanticRuntimeEvaluatePromptCommand,
 } from '@harmony/semantic-model/schema/runtime-facade'
 import { Effect } from 'effect'
+import { nodeFileSystemError } from './runtime/shared/errors.ts'
 
 const makeTempDataRoot = Effect.tryPromise({
   try: () => Fs.mkdtemp(Path.join(Os.tmpdir(), 'harmony-concurrency-idempotency-')),
-  catch: cause => cause,
+  catch: nodeFileSystemError,
 })
 
 function removeTempDataRoot(dataRoot: string) {
   return Effect.tryPromise({
     try: () => Fs.rm(dataRoot, { recursive: true, force: true }),
-    catch: cause => cause,
+    catch: nodeFileSystemError,
   }).pipe(
     Effect.catch(() => Effect.succeed(undefined)),
   )
@@ -214,7 +215,7 @@ function locateProjectDataRoot(dataRoot: string, ref: ProjectRef) {
 function writeLockFile(lockPath: string) {
   return Effect.tryPromise({
     try: () => Fs.writeFile(lockPath, 'busy', { flag: 'wx' }),
-    catch: cause => cause,
+    catch: nodeFileSystemError,
   })
 }
 

@@ -18,6 +18,7 @@ import {
   SemanticRuntimeStatusQuery,
 } from '@harmony/semantic-model/schema/runtime-facade'
 import { Effect, Schema } from 'effect'
+import { nodeFileSystemError } from './runtime/shared/errors.ts'
 
 const projectRef = new ProjectRef({
   projectId: 'project:vocabulary-mcp-authority',
@@ -31,13 +32,13 @@ const mcpProjectRef = new McpProjectRefInput({
 
 const makeTempDataRoot = Effect.tryPromise({
   try: () => Fs.mkdtemp(Path.join(Os.tmpdir(), 'harmony-vocabulary-mcp-')),
-  catch: cause => cause,
+  catch: nodeFileSystemError,
 })
 
 function removeTempDataRoot(dataRoot: string) {
   return Effect.tryPromise({
     try: () => Fs.rm(dataRoot, { recursive: true, force: true }),
-    catch: cause => cause,
+    catch: nodeFileSystemError,
   }).pipe(
     Effect.catch(() => Effect.succeed(undefined)),
   )

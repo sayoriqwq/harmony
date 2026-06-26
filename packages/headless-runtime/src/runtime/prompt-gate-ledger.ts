@@ -53,6 +53,11 @@ import {
 import { Context, Effect, Layer, Schema } from 'effect'
 import { deterministicInstant } from './constants.ts'
 import { RuntimeDataLocator } from './runtime-data-locator.ts'
+import {
+  hasErrorCode,
+  causeMessage as nodeCauseMessage,
+  nodeFileSystemError,
+} from './shared/errors.ts'
 
 export class PromptGateLedgerError extends Schema.TaggedErrorClass<PromptGateLedgerError>()(
   'PromptGateLedgerError',
@@ -81,7 +86,7 @@ const ledgerLockMaxAttempts = 5
 const ledgerBusyRetryAfterMs = 25
 
 function causeMessage(cause: unknown): string {
-  return cause instanceof Error ? cause.message : String(cause)
+  return nodeCauseMessage(cause)
 }
 
 function promptGateLedgerPath(projectDataRoot: string) {
@@ -596,11 +601,11 @@ function promptGateRecordLines(records: ReadonlyArray<PromptGateLedgerRecordType
 }
 
 function isNotFound(cause: unknown): boolean {
-  return cause instanceof Error && 'code' in cause && cause.code === 'ENOENT'
+  return hasErrorCode(cause, 'ENOENT')
 }
 
 function isAlreadyExists(cause: unknown): boolean {
-  return cause instanceof Error && 'code' in cause && cause.code === 'EEXIST'
+  return hasErrorCode(cause, 'EEXIST')
 }
 
 function acquirePromptLedgerLock(lockPath: string) {
@@ -608,7 +613,7 @@ function acquirePromptLedgerLock(lockPath: string) {
     for (let attempt = 0; attempt < ledgerLockMaxAttempts; attempt += 1) {
       const handle = yield* Effect.tryPromise({
         try: () => Fs.open(lockPath, 'wx'),
-        catch: cause => cause,
+        catch: nodeFileSystemError,
       }).pipe(
         Effect.matchEffect({
           onFailure: (cause) => {

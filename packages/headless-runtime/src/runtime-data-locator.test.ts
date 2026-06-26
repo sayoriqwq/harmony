@@ -16,6 +16,7 @@ import {
   RuntimeHostProvenance,
 } from '@harmony/semantic-model/schema/runtime-data'
 import { Effect, Schema } from 'effect'
+import { nodeFileSystemError } from './runtime/shared/errors.ts'
 
 function firstOf<A>(items: ReadonlyArray<A>, label: string): A {
   const value = items[0]
@@ -27,13 +28,13 @@ function firstOf<A>(items: ReadonlyArray<A>, label: string): A {
 
 const makeTempDataRoot = Effect.tryPromise({
   try: () => Fs.mkdtemp(Path.join(Os.tmpdir(), 'harmony-runtime-data-')),
-  catch: cause => cause,
+  catch: nodeFileSystemError,
 })
 
 function removeTempDataRoot(dataRoot: string) {
   return Effect.tryPromise({
     try: () => Fs.rm(dataRoot, { recursive: true, force: true }),
-    catch: cause => cause,
+    catch: nodeFileSystemError,
   }).pipe(
     Effect.catch(() => Effect.succeed(undefined)),
   )

@@ -16,6 +16,7 @@ import {
 } from '@harmony/semantic-model/schema/runtime-facade'
 import { Effect } from 'effect'
 import { PromptGateLedger } from './runtime/prompt-gate-ledger.ts'
+import { nodeFileSystemError } from './runtime/shared/errors.ts'
 
 const projectRef = new ProjectRef({
   projectId: 'project:prompt-gate-pass',
@@ -24,13 +25,13 @@ const projectRef = new ProjectRef({
 
 const makeTempDataRoot = Effect.tryPromise({
   try: () => Fs.mkdtemp(Path.join(Os.tmpdir(), 'harmony-prompt-gate-')),
-  catch: cause => cause,
+  catch: nodeFileSystemError,
 })
 
 function removeTempDataRoot(dataRoot: string) {
   return Effect.tryPromise({
     try: () => Fs.rm(dataRoot, { recursive: true, force: true }),
-    catch: cause => cause,
+    catch: nodeFileSystemError,
   }).pipe(
     Effect.catch(() => Effect.succeed(undefined)),
   )
