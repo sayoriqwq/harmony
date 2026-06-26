@@ -1,0 +1,19 @@
+[mcp_servers.semantic_runtime]
+command = "sh"
+args = ["-lc", "cd \"$(git rev-parse --show-toplevel)\" && HARMONY_REPO_ROOT=. HARMONY_SEMANTIC_DATA_ROOT=.codex/semantic-runtime-data exec node plugins/harmony-semantic-runtime/scripts/semantic-runtime-mcp.mjs"]
+startup_timeout_sec = 30.0
+tool_timeout_sec = 30.0
+
+[[hooks.UserPromptSubmit]]
+[[hooks.UserPromptSubmit.hooks]]
+type = "command"
+command = "cd \"$(git rev-parse --show-toplevel)\" && HARMONY_REPO_ROOT=. HARMONY_SEMANTIC_DATA_ROOT=.codex/semantic-runtime-data node plugins/harmony-semantic-runtime/scripts/user-prompt-submit.mjs"
+statusMessage = "Checking semantic runtime..."
+timeout = 12
+
+[[hooks.PreToolUse]]
+matcher = "apply_patch|mcp__semantic_runtime__.*"
+[[hooks.PreToolUse.hooks]]
+type = "command"
+command = "cd \"$(git rev-parse --show-toplevel)\" && HARMONY_REPO_ROOT=. HARMONY_SEMANTIC_DATA_ROOT=.codex/semantic-runtime-data node plugins/harmony-semantic-runtime/scripts/pre-tool-use.mjs"
+timeout = 5
