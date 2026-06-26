@@ -1,0 +1,25 @@
+{
+  "fixtureKind": "codex-host-event-fixture",
+  "payload": {
+    "session_id": "codex-session:host-contract",
+    "transcript_path": "/Users/sayori/.codex/sessions/host-contract.jsonl",
+    "cwd": "/Users/sayori/Desktop/yume-infra/harmony",
+    "hook_event_name": "PreToolUse",
+    "model": "gpt-5",
+    "permission_mode": "default",
+    "turn_id": "codex-turn:prompt-001",
+    "tool_name": "mcp__semantic_runtime__semantic_status",
+    "tool_use_id": "codex-tool:mcp-001",
+    "tool_input": {
+      "projectRef": {
+        "kind": "cwd",
+        "cwd": "/Users/sayori/Desktop/yume-infra/harmony"
+      },
+      "includeLedger": false
+    }
+  },
+  "runtime": {
+    "pluginRoot": "/Users/sayori/.codex/plugins/harmony-semantic-runtime",
+    "pluginData": "/Users/sayori/.codex/plugin-data/harmony-semantic-runtime"
+  }
+}

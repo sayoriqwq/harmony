@@ -8,6 +8,8 @@ dedupeDirectDeps: false
 
 optimisticRepeatInstall: true
 
+enableGlobalVirtualStore: false
+
 resolvePeersFromWorkspaceRoot: true
 
 shellEmulator: true
@@ -47,3 +49,6 @@ updateConfig:
     - typescript
 
 verifyDepsBeforeRun: error
+
+allowBuilds:
+  msgpackr-extract: false

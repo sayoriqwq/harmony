@@ -1,0 +1,16 @@
+{
+  "fixtureKind": "codex-host-event-fixture",
+  "payload": {
+    "session_id": "codex-session:host-contract",
+    "transcript_path": null,
+    "cwd": "/Users/sayori/Desktop/yume-infra/harmony",
+    "hook_event_name": "SessionStart",
+    "model": "gpt-5",
+    "permission_mode": "default",
+    "source": "startup"
+  },
+  "runtime": {
+    "pluginRoot": "/Users/sayori/.codex/plugins/harmony-semantic-runtime",
+    "pluginData": "/Users/sayori/.codex/plugin-data/harmony-semantic-runtime"
+  }
+}
