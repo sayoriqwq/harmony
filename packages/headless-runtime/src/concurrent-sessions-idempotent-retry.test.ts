@@ -24,13 +24,13 @@ import { nodeFileSystemError } from './runtime/shared/errors.ts'
 
 const makeTempDataRoot = Effect.tryPromise({
   try: () => Fs.mkdtemp(Path.join(Os.tmpdir(), 'harmony-concurrency-idempotency-')),
-  catch: nodeFileSystemError,
+  catch: nodeFileSystemError('mkdtemp', Os.tmpdir()),
 })
 
 function removeTempDataRoot(dataRoot: string) {
   return Effect.tryPromise({
     try: () => Fs.rm(dataRoot, { recursive: true, force: true }),
-    catch: nodeFileSystemError,
+    catch: nodeFileSystemError('rm', dataRoot),
   }).pipe(
     Effect.catch(() => Effect.succeed(undefined)),
   )
@@ -215,7 +215,7 @@ function locateProjectDataRoot(dataRoot: string, ref: ProjectRef) {
 function writeLockFile(lockPath: string) {
   return Effect.tryPromise({
     try: () => Fs.writeFile(lockPath, 'busy', { flag: 'wx' }),
-    catch: nodeFileSystemError,
+    catch: nodeFileSystemError('writeFile', lockPath),
   })
 }
 

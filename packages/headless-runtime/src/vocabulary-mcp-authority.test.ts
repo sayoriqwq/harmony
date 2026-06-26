@@ -32,13 +32,13 @@ const mcpProjectRef = new McpProjectRefInput({
 
 const makeTempDataRoot = Effect.tryPromise({
   try: () => Fs.mkdtemp(Path.join(Os.tmpdir(), 'harmony-vocabulary-mcp-')),
-  catch: nodeFileSystemError,
+  catch: nodeFileSystemError('mkdtemp', Os.tmpdir()),
 })
 
 function removeTempDataRoot(dataRoot: string) {
   return Effect.tryPromise({
     try: () => Fs.rm(dataRoot, { recursive: true, force: true }),
-    catch: nodeFileSystemError,
+    catch: nodeFileSystemError('rm', dataRoot),
   }).pipe(
     Effect.catch(() => Effect.succeed(undefined)),
   )

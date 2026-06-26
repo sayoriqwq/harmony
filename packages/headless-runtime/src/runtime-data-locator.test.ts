@@ -28,13 +28,13 @@ function firstOf<A>(items: ReadonlyArray<A>, label: string): A {
 
 const makeTempDataRoot = Effect.tryPromise({
   try: () => Fs.mkdtemp(Path.join(Os.tmpdir(), 'harmony-runtime-data-')),
-  catch: nodeFileSystemError,
+  catch: nodeFileSystemError('mkdtemp', Os.tmpdir()),
 })
 
 function removeTempDataRoot(dataRoot: string) {
   return Effect.tryPromise({
     try: () => Fs.rm(dataRoot, { recursive: true, force: true }),
-    catch: nodeFileSystemError,
+    catch: nodeFileSystemError('rm', dataRoot),
   }).pipe(
     Effect.catch(() => Effect.succeed(undefined)),
   )

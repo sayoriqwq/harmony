@@ -613,7 +613,7 @@ function acquirePromptLedgerLock(lockPath: string) {
     for (let attempt = 0; attempt < ledgerLockMaxAttempts; attempt += 1) {
       const handle = yield* Effect.tryPromise({
         try: () => Fs.open(lockPath, 'wx'),
-        catch: nodeFileSystemError,
+        catch: nodeFileSystemError('open', lockPath),
       }).pipe(
         Effect.matchEffect({
           onFailure: (cause) => {
