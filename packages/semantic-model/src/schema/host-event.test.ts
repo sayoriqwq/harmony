@@ -4,6 +4,7 @@ import {
   codexHostEventProvenance,
   decodeCodexHostEvent,
   decodeCodexHostEventFixture,
+  decodeCodexPreToolUseApplyPatchEvent,
   decodeCodexPreToolUseBashEvent,
   decodeCodexPreToolUseMcpEvent,
   decodeCodexSessionStartEvent,
@@ -71,6 +72,20 @@ describe('Codex host event codec fixtures', () => {
       const decodedSessionStart = yield* decodeCodexSessionStartEvent(sessionStart.payload)
       assert.strictEqual(decodedSessionStart.hook_event_name, 'SessionStart')
       assert.strictEqual(decodedSessionStart.source, 'startup')
+    }))
+
+  it.effect('accepts apply_patch PreToolUse payloads without an inline patch field', () =>
+    Effect.gen(function* () {
+      const bashTool = yield* readDecodedFixture('pre-tool-use-bash.json')
+      const decodedApplyPatch = yield* decodeCodexPreToolUseApplyPatchEvent({
+        ...bashTool.payload,
+        tool_name: 'apply_patch',
+        tool_use_id: 'codex-tool:apply-patch-without-patch',
+        tool_input: {},
+      })
+
+      assert.strictEqual(decodedApplyPatch.tool_name, 'apply_patch')
+      assert.strictEqual(decodedApplyPatch.tool_input.patch, undefined)
     }))
 
   it.effect('ignores unknown fixture, payload, runtime, and tool input fields', () =>

@@ -82,7 +82,7 @@ export class CodexBashToolInput extends Schema.Class<CodexBashToolInput>(
 export class CodexApplyPatchToolInput extends Schema.Class<CodexApplyPatchToolInput>(
   'harmony.semantic-model/CodexApplyPatchToolInput',
 )({
-  patch: HostText,
+  patch: Schema.optionalKey(HostText),
 }) {}
 
 export const CodexMcpToolInput = Schema.Record(Schema.String, Schema.Json)

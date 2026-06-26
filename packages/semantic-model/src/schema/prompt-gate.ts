@@ -26,7 +26,10 @@ export class PromptGatePassDecision extends Schema.Class<PromptGatePassDecision>
   additionalContext: PromptGateAdditionalContext,
 }) {}
 
-export const PromptGateNoopReason = Schema.Literal('unmanaged_project')
+export const PromptGateNoopReason = Schema.Literals([
+  'unmanaged_project',
+  'no_request_frame_detected',
+])
 export const PromptGateStoragePolicy = Schema.Literal('no_storage_required')
 export const PromptGateBlockReason = Schema.Literal('ledger_unavailable')
 

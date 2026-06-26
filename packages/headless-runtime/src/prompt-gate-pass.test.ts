@@ -4,7 +4,12 @@ import * as Fs from 'node:fs/promises'
 import * as Os from 'node:os'
 import * as Path from 'node:path'
 import { assert, describe, it } from '@effect/vitest'
-import { SemanticRuntimeFacade } from '@harmony/headless-runtime/runtime/semantic-runtime-facade'
+import {
+  compileAndPublishVocabularyCommandFromMcp,
+  McpProjectRefInput,
+  McpSemanticCompileAndPublishVocabularyRequest,
+  SemanticRuntimeFacade,
+} from '@harmony/headless-runtime/runtime/semantic-runtime-facade'
 import {
   decodeCodexHostEventFixture,
   decodeCodexUserPromptSubmitEvent,
@@ -21,6 +26,11 @@ import { nodeFileSystemError } from './runtime/shared/errors.ts'
 const projectRef = new ProjectRef({
   projectId: 'project:prompt-gate-pass',
   canonicalRoot: '/workspace/prompt-gate-pass',
+})
+
+const mcpProjectRef = new McpProjectRefInput({
+  project_id: projectRef.projectId,
+  canonical_root: projectRef.canonicalRoot,
 })
 
 const makeTempDataRoot = Effect.tryPromise({
@@ -50,18 +60,58 @@ function runPromptLedger<A, E>(effect: Effect.Effect<A, E, PromptGateLedger>) {
   return effect.pipe(Effect.provide(PromptGateLedger.layerLive))
 }
 
-const readUserPromptSubmitFixture = Effect.fn('readUserPromptSubmitFixture')(function* () {
+const readUserPromptSubmitFixture = Effect.fn('readUserPromptSubmitFixture')(function* (prompt?: string) {
   const raw = yield* Effect.promise(() =>
     readFile(new URL('../../../fixtures/hooks/user-prompt-submit.json', import.meta.url), 'utf8'),
   )
   const fixture = yield* decodeCodexHostEventFixture(JSON.parse(raw) as unknown)
-  return yield* decodeCodexUserPromptSubmitEvent(fixture.payload)
+  return yield* decodeCodexUserPromptSubmitEvent({
+    ...fixture.payload,
+    ...(prompt !== undefined ? { prompt } : {}),
+  })
 })
 
-function evaluatePrompt(dataRoot: string, operationId = 'operation:prompt-pass-1') {
+function baseVocabularyPublishRequest(dataRoot: string, namespace: string, content: string) {
+  return new McpSemanticCompileAndPublishVocabularyRequest({
+    tool: 'semantic_compile_and_publish_vocabulary',
+    effect: 'authority_command',
+    request_id: `request:${namespace}`,
+    data_root: dataRoot,
+    project_ref: mcpProjectRef,
+    operation_id: `operation:${namespace}`,
+    vocabulary_source: {
+      namespace,
+      vocabulary_kind: 'base',
+      content,
+    },
+  })
+}
+
+function publishBaseVocabulary(dataRoot: string) {
   return runFacade(Effect.gen(function* () {
     const facade = yield* SemanticRuntimeFacade
-    const hostEvent = yield* readUserPromptSubmitFixture()
+    const sources = [
+      ['base.prompt_action', '检查：对目标内容进行验证、审阅或判断，不直接修改目标内容'],
+      ['base.prompt_action.edit', '修改：对目标内容进行编辑、改写、替换或改变'],
+      ['base.prompt_action.prohibit_edit', '禁止修改：用户明确要求不要编辑、改写、替换或改变目标内容'],
+    ] as const
+    for (const [namespace, content] of sources) {
+      const command = yield* compileAndPublishVocabularyCommandFromMcp(
+        baseVocabularyPublishRequest(dataRoot, namespace, content),
+      )
+      yield* facade.compileAndPublishVocabulary(command)
+    }
+  }))
+}
+
+function evaluatePrompt(
+  dataRoot: string,
+  operationId = 'operation:prompt-pass-1',
+  prompt?: string,
+) {
+  return runFacade(Effect.gen(function* () {
+    const facade = yield* SemanticRuntimeFacade
+    const hostEvent = yield* readUserPromptSubmitFixture(prompt)
     return yield* facade.evaluateAndRecordPrompt(new SemanticRuntimeEvaluatePromptCommand({
       requestId: 'request:prompt-pass-1',
       dataRoot,
@@ -102,6 +152,7 @@ describe('Prompt Gate pass-to-case vertical', () => {
   it.effect('records a validate-only UserPromptSubmit as a compact pass decision and queryable Case', () =>
     Effect.gen(function* () {
       const dataRoot = yield* tempDataRoot
+      yield* publishBaseVocabulary(dataRoot)
 
       const response = yield* evaluatePrompt(dataRoot)
       const records = yield* promptGateRecords(dataRoot)
@@ -170,9 +221,69 @@ describe('Prompt Gate pass-to-case vertical', () => {
       assert.strictEqual(afterGetCase.length, records.length)
     }))
 
+  it.effect('records a rewrite prompt from published Base Vocabulary without fabricated spans', () =>
+    Effect.gen(function* () {
+      const dataRoot = yield* tempDataRoot
+      yield* publishBaseVocabulary(dataRoot)
+
+      const response = yield* evaluatePrompt(dataRoot, 'operation:prompt-rewrite-zh', '请修改代码')
+      const records = yield* promptGateRecords(dataRoot)
+      const result = passResult(response)
+
+      assert.strictEqual(result.action, 'rewrite')
+      assert.deepStrictEqual(result.prohibitedActions, [])
+      const promptRecord = records.find(record => record.recordKind === 'PromptObserved')
+      assert.ok(promptRecord)
+      if (promptRecord === undefined || promptRecord.recordKind !== 'PromptObserved') {
+        assert.fail('Expected PromptObserved record')
+      }
+      assert.strictEqual(promptRecord.source.originalText, '请修改代码')
+      assert.strictEqual(promptRecord.source.spans.some(span => span.text === 'check'), false)
+      assert.strictEqual(promptRecord.source.spans.some(span => span.text === 'do not edit it'), false)
+      assert.strictEqual(promptRecord.source.spans.every(span => span.startOffset >= 0 && span.endOffset >= 0), true)
+    }))
+
+  it.effect('returns managed no-op without opening a Case when no request frame is detected', () =>
+    Effect.gen(function* () {
+      const dataRoot = yield* tempDataRoot
+      yield* publishBaseVocabulary(dataRoot)
+
+      const response = yield* evaluatePrompt(dataRoot, 'operation:prompt-no-frame-zh', '测试第二次')
+      const records = yield* promptGateRecords(dataRoot)
+
+      assert.strictEqual(response.effect, 'pure')
+      assert.deepStrictEqual(response.sourceRecordIds, [])
+      assert.deepStrictEqual(response.committedRecordIds, [])
+      assert.strictEqual(response.result.decisionKind, 'noop')
+      if (response.result.decisionKind !== 'noop') {
+        assert.fail('Expected Prompt Gate no-op')
+      }
+      assert.strictEqual(response.result.reason, 'no_request_frame_detected')
+      assert.deepStrictEqual(records, [])
+    }))
+
+  it.effect('keeps ambiguous check-and-improve prompt blocked for clarification', () =>
+    Effect.gen(function* () {
+      const dataRoot = yield* tempDataRoot
+      yield* publishBaseVocabulary(dataRoot)
+
+      const response = yield* evaluatePrompt(
+        dataRoot,
+        'operation:prompt-check-improve',
+        'check and improve this document',
+      )
+
+      assert.strictEqual(response.result.decisionKind, 'blockClarify')
+      if (response.result.decisionKind !== 'blockClarify') {
+        assert.fail('Expected Prompt Gate blockClarify')
+      }
+      assert.strictEqual(response.result.reason, 'behavior_changing_action_ambiguity')
+    }))
+
   it.effect('returns the prior prompt commit on operation retry without duplicate records', () =>
     Effect.gen(function* () {
       const dataRoot = yield* tempDataRoot
+      yield* publishBaseVocabulary(dataRoot)
 
       const first = yield* evaluatePrompt(dataRoot, 'operation:prompt-pass-retry')
       const recordsAfterFirst = yield* promptGateRecords(dataRoot)

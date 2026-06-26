@@ -549,6 +549,19 @@ export class SemanticRuntimeFacade extends Context.Service<SemanticRuntimeFacade
                 return Effect.fail(toPromptRuntimeError(decoded.requestId, error))
               },
               onSuccess: (commit) => {
+                if (commit instanceof PromptGateNoopDecision) {
+                  return Schema.decodeUnknownEffect(SemanticRuntimeEvaluatePromptResponse)(
+                    new SemanticRuntimeEvaluatePromptResponse({
+                      apiVersion: 'semantic-runtime-facade.v1',
+                      requestId: decoded.requestId,
+                      effect: 'pure',
+                      asOfSeq: 0,
+                      sourceRecordIds: [],
+                      committedRecordIds: [],
+                      result: commit,
+                    }),
+                  )
+                }
                 const committedRecordIds = commit.records.map(record => record.recordId)
                 return Schema.decodeUnknownEffect(SemanticRuntimeEvaluatePromptResponse)(
                   new SemanticRuntimeEvaluatePromptResponse({

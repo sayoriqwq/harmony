@@ -71,6 +71,9 @@ function evaluatePrompt(dataRoot: string, operationId: string, prompt: string, t
     const commit = pending === undefined
       ? yield* ledger.recordPrompt(command)
       : yield* ledger.resolveClarification(command, pending)
+    if (!('records' in commit)) {
+      assert.fail('Expected Prompt Gate commit result')
+    }
     return new SemanticRuntimeEvaluatePromptResponse({
       apiVersion: 'semantic-runtime-facade.v1',
       requestId: `request:${operationId}`,

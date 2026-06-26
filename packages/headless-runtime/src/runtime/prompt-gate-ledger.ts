@@ -1,3 +1,4 @@
+import type { LedgerRecordType } from '@harmony/semantic-model/schema/ledger-record'
 import type { PromptGateLedgerRecordType } from '@harmony/semantic-model/schema/prompt-gate'
 import type { SemanticRuntimeEvaluatePromptCommand } from '@harmony/semantic-model/schema/runtime-facade'
 import type { FileHandle } from 'node:fs/promises'
@@ -36,6 +37,7 @@ import {
   PromptGateCommitResult,
   PromptGateDecisionRecordedRecord,
   PromptGateLedgerRecord,
+  PromptGateNoopDecision,
   PromptGatePassDecision,
   PromptObservedRecord,
 } from '@harmony/semantic-model/schema/prompt-gate'
@@ -58,6 +60,7 @@ import {
   causeMessage as nodeCauseMessage,
   nodeFileSystemError,
 } from './shared/errors.ts'
+import { VocabularyCommandLedger, VocabularyCommandLedgerError } from './vocabulary-command-ledger.ts'
 
 export class PromptGateLedgerError extends Schema.TaggedErrorClass<PromptGateLedgerError>()(
   'PromptGateLedgerError',
@@ -114,18 +117,141 @@ function sourceSpan(id: string, startOffset: number, endOffset: number, text: st
   })
 }
 
-function firstMatchingSpan(prompt: string, text: string, fallbackStart: number, id: string) {
-  const index = prompt.indexOf(text)
-  const startOffset = index === -1 ? fallbackStart : index
-  return sourceSpan(id, startOffset, startOffset + text.length, text)
-}
-
 function recordId(token: string, suffix: string) {
   return `prompt-gate-record:${token}-${suffix}`
 }
 
 function evidenceRef(sourceId: typeof EvidenceSourceId.Type, spanId: typeof SourceSpanId.Type) {
   return new EvidenceRef({ sourceId, spanId })
+}
+
+interface PromptMatch {
+  readonly text: string
+  readonly index: number
+}
+
+interface PromptActionClassification {
+  readonly action: 'validate' | 'rewrite'
+  readonly actionMatch: PromptMatch
+  readonly prohibitedMatch?: PromptMatch
+}
+
+interface BaseVocabularyCapabilities {
+  readonly validate: boolean
+  readonly rewrite: boolean
+  readonly prohibitEdit: boolean
+}
+
+function firstPromptMatch(prompt: string, terms: ReadonlyArray<string>): PromptMatch | undefined {
+  const lowerPrompt = prompt.toLowerCase()
+  let best: PromptMatch | undefined
+  for (const term of terms) {
+    const index = lowerPrompt.indexOf(term.toLowerCase())
+    if (index === -1) {
+      continue
+    }
+    if (best === undefined || index < best.index) {
+      best = {
+        text: prompt.slice(index, index + term.length),
+        index,
+      }
+    }
+  }
+  return best
+}
+
+function hasPublishedBasePackage(records: ReadonlyArray<LedgerRecordType>, namespace: string) {
+  return records.some(record =>
+    record.recordKind === 'PackageVersionPublished'
+    && record.publishedPackage.namespace === namespace
+    && record.publishedPackage.lifecycle === 'published',
+  )
+}
+
+function publishedBaseVocabularyTexts(records: ReadonlyArray<LedgerRecordType>) {
+  return records.flatMap((record) => {
+    if (
+      record.recordKind !== 'PackageVersionPublished'
+      || !record.publishedPackage.namespace.startsWith('base.')
+      || record.publishedPackage.lifecycle !== 'published'
+    ) {
+      return []
+    }
+    return [
+      ...record.publishedPackage.artifacts.terms.map(term => term.label),
+      ...record.publishedPackage.artifacts.definitions.map(definition => definition.text),
+    ]
+  })
+}
+
+function baseVocabularyCapabilities(records: ReadonlyArray<LedgerRecordType>): BaseVocabularyCapabilities {
+  const texts = publishedBaseVocabularyTexts(records)
+  const hasText = (predicate: (text: string) => boolean) => texts.some(predicate)
+  return {
+    validate: hasPublishedBasePackage(records, 'base.prompt_action')
+      || hasText(text => text.includes('检查') && /验证|审阅|判断/.test(text)),
+    rewrite: hasPublishedBasePackage(records, 'base.prompt_action.edit')
+      || hasText(text => text.includes('修改') && /编辑|改写|替换|改变/.test(text)),
+    prohibitEdit: hasPublishedBasePackage(records, 'base.prompt_action.prohibit_edit')
+      || hasText(text => text.includes('禁止修改') || /明确要求不要.*(?:编辑|改写|替换|改变)/.test(text)),
+  }
+}
+
+const validateTerms = ['检查', '查看', '看看', 'check', 'review', 'validate']
+const rewriteTerms = ['修改', '改写', '编辑', 'rewrite', 'edit', 'modify', 'fix', 'improve']
+const prohibitEditPhrases = [
+  'do not edit it',
+  'do not edit',
+  'don\'t edit',
+  '不要修改',
+  '不要改写',
+  '不要编辑',
+  '禁止修改',
+  '禁止改写',
+  '禁止编辑',
+  '别修改',
+  '别改写',
+  '别编辑',
+]
+
+function classifyPrompt(
+  prompt: string,
+  capabilities: BaseVocabularyCapabilities,
+): PromptActionClassification | undefined {
+  const validateMatch = capabilities.validate ? firstPromptMatch(prompt, validateTerms) : undefined
+  const rewriteMatch = capabilities.rewrite ? firstPromptMatch(prompt, rewriteTerms) : undefined
+  const prohibitedMatch = capabilities.prohibitEdit ? firstPromptMatch(prompt, prohibitEditPhrases) : undefined
+
+  if (validateMatch !== undefined && prohibitedMatch !== undefined) {
+    return {
+      action: 'validate',
+      actionMatch: validateMatch,
+      prohibitedMatch,
+    }
+  }
+  if (rewriteMatch !== undefined && validateMatch === undefined) {
+    return {
+      action: 'rewrite',
+      actionMatch: rewriteMatch,
+    }
+  }
+  if (validateMatch !== undefined) {
+    return {
+      action: 'validate',
+      actionMatch: validateMatch,
+    }
+  }
+
+  return undefined
+}
+
+function noRequestFrameDecision(command: SemanticRuntimeEvaluatePromptCommand) {
+  return new PromptGateNoopDecision({
+    decisionKind: 'noop',
+    reason: 'no_request_frame_detected',
+    projectRef: command.projectRef,
+    storagePolicy: 'no_storage_required',
+  })
 }
 
 function observedRecordFrom(
@@ -153,6 +279,22 @@ function observedRecordFrom(
 function canonicalValidateOnlyArtifacts(
   command: SemanticRuntimeEvaluatePromptCommand,
 ): PromptGateCommitResult {
+  const actionMatch = firstPromptMatch(command.hostEvent.prompt, ['check', '检查'])
+  const prohibitedMatch = firstPromptMatch(command.hostEvent.prompt, ['do not edit it', '不要修改', '禁止修改'])
+  if (actionMatch === undefined) {
+    throw new Error('Validate-only Prompt Gate artifact requires action evidence')
+  }
+  return canonicalPromptArtifacts(command, {
+    action: 'validate',
+    actionMatch,
+    ...(prohibitedMatch !== undefined ? { prohibitedMatch } : {}),
+  })
+}
+
+function canonicalPromptArtifacts(
+  command: SemanticRuntimeEvaluatePromptCommand,
+  classification: PromptActionClassification,
+): PromptGateCommitResult {
   const token = tokenFor(command.operationId)
   const prompt = command.hostEvent.prompt
   const promptInputId = Schema.decodeUnknownSync(SemanticInputId)(`semantic-input:${token}-prompt`)
@@ -161,13 +303,39 @@ function canonicalValidateOnlyArtifacts(
   const environmentRef = Schema.decodeUnknownSync(ActiveEnvironmentId)('active-environment:default-project')
   const semanticIrId = Schema.decodeUnknownSync(SemanticIrId)(`semantic-ir:${token}-prompt`)
   const caseId = Schema.decodeUnknownSync(CaseId)(`case:${token}`)
-  const requestFrameId = Schema.decodeUnknownSync(RequestFrameId)(`request-frame:${token}-validate`)
+  const requestFrameId = Schema.decodeUnknownSync(RequestFrameId)(`request-frame:${token}-${classification.action}`)
 
   const fullSpan = sourceSpan(`${token}-full`, 0, prompt.length, prompt)
-  const actionSpan = firstMatchingSpan(prompt, 'check', 0, `${token}-action`)
-  const prohibitedSpan = firstMatchingSpan(prompt, 'do not edit it', prompt.length - 'do not edit it'.length, `${token}-prohibit-edit`)
+  const actionSpan = sourceSpan(
+    `${token}-action`,
+    classification.actionMatch.index,
+    classification.actionMatch.index + classification.actionMatch.text.length,
+    classification.actionMatch.text,
+  )
+  const prohibitedSpan = classification.prohibitedMatch === undefined
+    ? undefined
+    : sourceSpan(
+        `${token}-prohibit-edit`,
+        classification.prohibitedMatch.index,
+        classification.prohibitedMatch.index + classification.prohibitedMatch.text.length,
+        classification.prohibitedMatch.text,
+      )
   const actionEvidence = evidenceRef(evidenceSourceId, actionSpan.id)
-  const prohibitedEvidence = evidenceRef(evidenceSourceId, prohibitedSpan.id)
+  const prohibitedEvidence = prohibitedSpan === undefined
+    ? undefined
+    : evidenceRef(evidenceSourceId, prohibitedSpan.id)
+  const spans = prohibitedSpan === undefined
+    ? [fullSpan, actionSpan]
+    : [fullSpan, actionSpan, prohibitedSpan]
+  const prohibitedActions = prohibitedEvidence === undefined
+    ? []
+    : [
+        new ProhibitedAction({
+          action: 'rewrite',
+          evidenceRefs: [prohibitedEvidence],
+        }),
+      ]
+  const prohibitedActionEvidenceRefs = prohibitedEvidence === undefined ? [] : [prohibitedEvidence]
 
   const input = new PromptInput({
     id: promptInputId,
@@ -175,7 +343,7 @@ function canonicalValidateOnlyArtifacts(
     content: prompt,
     promptRole: 'user_request',
     targetRefs: [targetInputId],
-    spans: [fullSpan, actionSpan, prohibitedSpan],
+    spans,
   })
   const source = new PromptEvidenceSource({
     id: evidenceSourceId,
@@ -188,21 +356,16 @@ function canonicalValidateOnlyArtifacts(
   const requestFrame = new RequestFrame({
     id: requestFrameId,
     frameKind: 'request',
-    action: 'validate',
+    action: classification.action,
     target: new RequestTarget({
       targetKind: 'referenced_document',
       targetRef: targetInputId,
       evidenceRefs: [actionEvidence],
     }),
-    prohibitedActions: [
-      new ProhibitedAction({
-        action: 'rewrite',
-        evidenceRefs: [prohibitedEvidence],
-      }),
-    ],
+    prohibitedActions,
     actionEvidenceRefs: [actionEvidence],
     targetEvidenceRefs: [actionEvidence],
-    prohibitedActionEvidenceRefs: [prohibitedEvidence],
+    prohibitedActionEvidenceRefs,
   })
   const semanticIr = new SemanticIr({
     id: semanticIrId,
@@ -214,7 +377,9 @@ function canonicalValidateOnlyArtifacts(
     relationAssertions: [],
     competingInterpretations: [],
     unresolvedSpans: [],
-    evidenceRefs: [actionEvidence, prohibitedEvidence],
+    evidenceRefs: prohibitedActionEvidenceRefs.length === 0
+      ? [actionEvidence]
+      : [actionEvidence, ...prohibitedActionEvidenceRefs],
     decisionState: 'parsed',
   })
   const openedCase = new Case({
@@ -231,15 +396,15 @@ function canonicalValidateOnlyArtifacts(
   })
   const additionalContext = new PromptGateAdditionalContext({
     caseId,
-    action: 'validate',
-    prohibitedActions: ['rewrite'],
+    action: classification.action,
+    prohibitedActions: prohibitedActionEvidenceRefs.length === 0 ? [] : ['rewrite'],
     environmentRef,
   })
   const decision = new PromptGatePassDecision({
     decisionKind: 'pass',
     caseId,
-    action: 'validate',
-    prohibitedActions: ['rewrite'],
+    action: classification.action,
+    prohibitedActions: prohibitedActionEvidenceRefs.length === 0 ? [] : ['rewrite'],
     environmentRef,
     additionalContext,
   })
@@ -596,6 +761,10 @@ function isAmbiguousImprovePrompt(prompt: string) {
   return prompt.trim().toLowerCase() === 'check and improve this document'
 }
 
+function isLegacyValidateOnlyPrompt(prompt: string) {
+  return prompt.trim().toLowerCase() === 'check this document; do not edit it'
+}
+
 function promptGateRecordLines(records: ReadonlyArray<PromptGateLedgerRecordType>) {
   return `${records.map(record => JSON.stringify(record)).join('\n')}\n`
 }
@@ -684,7 +853,7 @@ const commandSchema = Schema.Struct({
 export class PromptGateLedger extends Context.Service<PromptGateLedger, {
   recordPrompt: (
     command: SemanticRuntimeEvaluatePromptCommand,
-  ) => Effect.Effect<PromptGateCommitResult, PromptGateLedgerBusyError | PromptGateLedgerError | RuntimeDataAccessError | Schema.SchemaError>
+  ) => Effect.Effect<PromptGateCommitResult | PromptGateNoopDecision, PromptGateLedgerBusyError | PromptGateLedgerError | RuntimeDataAccessError | Schema.SchemaError>
   recordPass: (
     command: SemanticRuntimeEvaluatePromptCommand,
   ) => Effect.Effect<PromptGateCommitResult, PromptGateLedgerBusyError | PromptGateLedgerError | RuntimeDataAccessError | Schema.SchemaError>
@@ -714,6 +883,7 @@ export class PromptGateLedger extends Context.Service<PromptGateLedger, {
     PromptGateLedger,
     Effect.gen(function* () {
       const locator = yield* RuntimeDataLocator
+      const vocabularyLedger = yield* VocabularyCommandLedger
 
       const records = Effect.fn('PromptGateLedger.records')(
         function* (
@@ -884,7 +1054,7 @@ export class PromptGateLedger extends Context.Service<PromptGateLedger, {
       const recordPrompt = Effect.fn('PromptGateLedger.recordPrompt')(
         function* (
           command: SemanticRuntimeEvaluatePromptCommand,
-        ): Effect.fn.Return<PromptGateCommitResult, PromptGateLedgerBusyError | PromptGateLedgerError | RuntimeDataAccessError | Schema.SchemaError> {
+        ): Effect.fn.Return<PromptGateCommitResult | PromptGateNoopDecision, PromptGateLedgerBusyError | PromptGateLedgerError | RuntimeDataAccessError | Schema.SchemaError> {
           const decoded = yield* Schema.decodeUnknownEffect(commandSchema)(command)
           const existingRecords = yield* records(decoded.dataRoot, decoded.projectRef)
           const pending = pendingClarificationForSession(
@@ -897,7 +1067,55 @@ export class PromptGateLedger extends Context.Service<PromptGateLedger, {
           if (isAmbiguousImprovePrompt(decoded.hostEvent.prompt)) {
             return yield* recordClarification(decoded)
           }
-          return yield* recordPass(decoded)
+          if (isLegacyValidateOnlyPrompt(decoded.hostEvent.prompt)) {
+            return yield* recordPass(decoded)
+          }
+          const vocabularyRecords = yield* vocabularyLedger.records(decoded.dataRoot, decoded.projectRef).pipe(
+            Effect.mapError((error) => {
+              if (error instanceof VocabularyCommandLedgerError) {
+                return new PromptGateLedgerError({
+                  operation: 'read-prompt-gate-records',
+                  path: decoded.dataRoot,
+                  message: error.message,
+                })
+              }
+              return error
+            }),
+          )
+          const capabilities = baseVocabularyCapabilities(vocabularyRecords)
+          const classification = classifyPrompt(decoded.hostEvent.prompt, capabilities)
+          if (classification === undefined) {
+            return noRequestFrameDecision(decoded)
+          }
+
+          const location = yield* locator.locate(new RuntimeDataLocatorRequest({
+            dataRoot: decoded.dataRoot,
+            projectRef: decoded.projectRef,
+          }))
+          const ledgerPath = promptGateLedgerPath(location.projectDataRoot)
+          return yield* withPromptLedgerLock(promptGateLedgerLockPath(location.projectDataRoot), Effect.gen(function* () {
+            const existingRecords = yield* records(decoded.dataRoot, decoded.projectRef)
+            const existingOperationRecords = existingRecords.filter(record => record.operationId === decoded.operationId)
+            const existingCommit = commitResultFromRecords(existingOperationRecords)
+            if (existingCommit !== undefined) {
+              return existingCommit
+            }
+
+            const commit = yield* Schema.decodeUnknownEffect(PromptGateCommitResult)(
+              canonicalPromptArtifacts(decoded, classification),
+            )
+            yield* Effect.tryPromise({
+              try: () => Fs.appendFile(ledgerPath, promptGateRecordLines(commit.records), 'utf8'),
+              catch: cause =>
+                new PromptGateLedgerError({
+                  operation: 'append-prompt-gate-records',
+                  path: ledgerPath,
+                  message: causeMessage(cause),
+                }),
+            })
+
+            return commit
+          }))
         },
       )
 
@@ -934,6 +1152,7 @@ export class PromptGateLedger extends Context.Service<PromptGateLedger, {
   )
 
   static readonly layerLive = PromptGateLedger.layerNoDeps.pipe(
+    Layer.provide(VocabularyCommandLedger.layerLive),
     Layer.provide(RuntimeDataLocator.layerLive),
   )
 }
