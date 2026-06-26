@@ -22,6 +22,7 @@
     "./schema/prompt-gate": "./src/schema/prompt-gate.ts",
     "./schema/runtime-data": "./src/schema/runtime-data.ts",
     "./schema/runtime-facade": "./src/schema/runtime-facade.ts",
+    "./schema/vocabulary-manifest": "./src/schema/vocabulary-manifest.ts",
     "./schema/results": "./src/schema/results.ts",
     "./schema/ledger-record": "./src/schema/ledger-record.ts",
     "./schema/workflow-result": "./src/schema/workflow-result.ts"

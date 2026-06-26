@@ -26,6 +26,7 @@ import {
   Concept,
   Definition,
   LexicalSense,
+  PackageRelationAssertion,
   PackageVersion,
   PublishedSemanticPackage,
   RuntimeBindingIdentity,
@@ -118,6 +119,14 @@ function publishedArtifacts(draft: SemanticPackageDraft): PublishedSemanticPacka
   }
 }
 
+function publishedRelations(draft: SemanticPackageDraft): Array<PackageRelationAssertion> {
+  return (draft.authoredRelations ?? []).map(relation =>
+    new PackageRelationAssertion({
+      ...relation,
+      lifecycle: 'published',
+    }))
+}
+
 function publishedRecordForDraft(
   draft: SemanticPackageDraft,
   sequence: number,
@@ -132,7 +141,7 @@ function publishedRecordForDraft(
     namespace: draft.namespace,
     lifecycle: 'published',
     artifacts: publishedArtifacts(draft),
-    authoritativeRelations: [],
+    authoritativeRelations: publishedRelations(draft),
     authoritativeConstraints: [],
     publishedAt: deterministicInstant,
   })

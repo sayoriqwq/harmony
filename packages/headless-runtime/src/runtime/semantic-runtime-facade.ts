@@ -218,6 +218,16 @@ function vocabularyInputFromMcp(input: McpVocabularySourceInput) {
     endOffset: input.content.length,
     text: input.content,
   })
+  if (input.content.trimStart().startsWith('{')) {
+    return Schema.decodeUnknownSync(VocabularyInput)({
+      id: vocabularyInputId(input.namespace),
+      inputKind: 'vocabulary',
+      content: input.content,
+      vocabularyKind: input.vocabulary_kind,
+      namespace: input.namespace,
+      spans: [fullSpan],
+    })
+  }
   const separatorIndex = input.content.search(/[：:]/)
   const spans = [fullSpan]
   if (separatorIndex > 0 && separatorIndex < input.content.length - 1) {

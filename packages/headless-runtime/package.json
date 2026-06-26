@@ -26,6 +26,7 @@
     "./ledger": "./src/runtime/ledger.ts"
   },
   "dependencies": {
+    "@harmony/base-vocabulary": "workspace:*",
     "@harmony/semantic-model": "workspace:*",
     "effect": "catalog:"
   }

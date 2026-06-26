@@ -1,10 +1,12 @@
 import type { SourceSpan, VocabularyInput } from '@harmony/semantic-model/schema/input'
+import type { StructuredVocabularyManifest } from '@harmony/semantic-model/schema/vocabulary-manifest'
 import type { LedgerViewNotFound } from './ledger.ts'
 import { PackageId as PackageIdSchema } from '@harmony/semantic-model/schema/ids'
 import { EvidenceRef, EvidenceSource } from '@harmony/semantic-model/schema/input'
 import { PackageVersionPublishedRecord, SemanticPackageDraftCompiledRecord, VocabularySourceImportedRecord } from '@harmony/semantic-model/schema/ledger-record'
-import { Concept, Definition, LexicalSense, PackageVersion, PublishedSemanticPackage, RuntimeBindingIdentity, SemanticPackageDraft, Term } from '@harmony/semantic-model/schema/package'
+import { Concept, Definition, LexicalSense, PackageRelationAssertion, PackageVersion, PublishedSemanticPackage, RuntimeBindingIdentity, SemanticPackageDraft, Term } from '@harmony/semantic-model/schema/package'
 import { PackagePublishResult, VocabularyCompileResult, VocabularyDraftPublicationSource } from '@harmony/semantic-model/schema/results'
+import { StructuredVocabularyManifest as StructuredVocabularyManifestSchema } from '@harmony/semantic-model/schema/vocabulary-manifest'
 import { CompileAndPublishResult } from '@harmony/semantic-model/schema/workflow-result'
 import { Context, Effect, Layer, Schema } from 'effect'
 import { compilerVersion, deterministicInstant, effectVersion, publisherVersion } from './constants.ts'
@@ -51,6 +53,49 @@ const findSpan = Effect.fn('findSpan')(
     return first
   },
 )
+
+function causeMessage(cause: unknown): string {
+  return cause instanceof Error ? cause.message : String(cause)
+}
+
+const parseStructuredManifest = Effect.fn('parseStructuredManifest')(
+  function* (
+    input: VocabularyInput,
+  ): Effect.fn.Return<StructuredVocabularyManifest | undefined, VocabularyCompileError> {
+    if (!input.content.trimStart().startsWith('{')) {
+      return undefined
+    }
+    const parsed = yield* Effect.try({
+      try: () => JSON.parse(input.content) as unknown,
+      catch: cause =>
+        new VocabularyCompileError({
+          inputId: input.id,
+          message: `Invalid structured Vocabulary Source JSON: ${causeMessage(cause)}`,
+        }),
+    })
+    const manifest = yield* Schema.decodeUnknownEffect(StructuredVocabularyManifestSchema)(parsed).pipe(
+      Effect.mapError(error =>
+        new VocabularyCompileError({
+          inputId: input.id,
+          message: `Invalid structured Vocabulary Source manifest: ${error.message}`,
+        })),
+    )
+    if (manifest.namespace !== input.namespace) {
+      return yield* new VocabularyCompileError({
+        inputId: input.id,
+        message: `Structured Vocabulary Source namespace ${manifest.namespace} does not match input namespace ${input.namespace}.`,
+      })
+    }
+    if (manifest.vocabularyKind !== input.vocabularyKind) {
+      return yield* new VocabularyCompileError({
+        inputId: input.id,
+        message: `Structured Vocabulary Source kind ${manifest.vocabularyKind} does not match input kind ${input.vocabularyKind}.`,
+      })
+    }
+    return manifest
+  },
+)
+
 function publishArtifacts(artifacts: SemanticPackageDraft['artifacts']): SemanticPackageDraft['artifacts'] {
   return {
     terms: artifacts.terms.map(term =>
@@ -75,6 +120,157 @@ function publishArtifacts(artifacts: SemanticPackageDraft['artifacts']): Semanti
       })),
   }
 }
+
+function publishRelations(relations: ReadonlyArray<PackageRelationAssertion>): Array<PackageRelationAssertion> {
+  return relations.map(relation =>
+    new PackageRelationAssertion({
+      ...relation,
+      lifecycle: 'published',
+    }))
+}
+
+const compileStructuredManifest = Effect.fn('compileStructuredManifest')(
+  function* (
+    input: VocabularyInput,
+    manifest: StructuredVocabularyManifest,
+  ): Effect.fn.Return<VocabularyCompileResult, VocabularyCompileError> {
+    const namespace = input.namespace
+    const packageId = Schema.decodeUnknownSync(PackageIdSchema)(`package:${namespace}`)
+    const evidenceSpan = input.spans[0]
+    if (evidenceSpan === undefined) {
+      return yield* new VocabularyCompileError({
+        inputId: input.id,
+        message: 'Structured VocabularyInput must carry at least one source span.',
+      })
+    }
+    const evidenceSource = new EvidenceSource({
+      id: Schema.decodeUnknownSync(EvidenceSource.fields.id)(`evidence-source:${namespace}:vocabulary`),
+      evidenceKind: 'vocabulary-source',
+      inputRef: input.id,
+      originalText: input.content,
+      spans: input.spans,
+      capturedAt: deterministicInstant,
+    })
+    const sourceEvidence = new EvidenceRef({
+      sourceId: evidenceSource.id,
+      spanId: evidenceSpan.id,
+    })
+
+    const terms: Array<Term> = []
+    const lexicalSenses: Array<LexicalSense> = []
+    const concepts: Array<Concept> = []
+    const definitions: Array<Definition> = []
+    const conceptIds = new Set(manifest.concepts.map(concept => concept.id))
+
+    for (const conceptSource of manifest.concepts) {
+      const conceptId = Schema.decodeUnknownSync(Concept.fields.id)(`concept:${conceptSource.id}`)
+      const definitionId = Schema.decodeUnknownSync(Definition.fields.id)(`definition:${conceptSource.id}:primary`)
+      const concept = new Concept({
+        id: conceptId,
+        artifactKind: 'concept',
+        packageId,
+        namespace,
+        canonicalLabel: conceptSource.canonicalLabel,
+        status: 'extracted',
+        lifecycle: 'draft',
+        authority: 'imported_source',
+        evidenceRefs: [sourceEvidence],
+      })
+      const definition = new Definition({
+        id: definitionId,
+        artifactKind: 'definition',
+        packageId,
+        namespace,
+        conceptId,
+        text: conceptSource.definition,
+        status: 'extracted',
+        lifecycle: 'draft',
+        authority: 'imported_source',
+        evidenceRefs: [sourceEvidence],
+      })
+      concepts.push(concept)
+      definitions.push(definition)
+
+      for (const [senseIndex, lexicalSenseSource] of conceptSource.lexicalSenses.entries()) {
+        const suffix = `sense-${senseIndex + 1}`
+        const term = new Term({
+          id: Schema.decodeUnknownSync(Term.fields.id)(`term:${conceptSource.id}:${suffix}`),
+          artifactKind: 'term',
+          packageId,
+          namespace,
+          label: lexicalSenseSource.term,
+          status: 'extracted',
+          lifecycle: 'draft',
+          authority: 'imported_source',
+          evidenceRefs: [sourceEvidence],
+        })
+        terms.push(term)
+        lexicalSenses.push(new LexicalSense({
+          id: Schema.decodeUnknownSync(LexicalSense.fields.id)(`lexical-sense:${conceptSource.id}:${suffix}`),
+          artifactKind: 'lexical-sense',
+          packageId,
+          namespace,
+          termId: term.id,
+          conceptId,
+          definitionId,
+          status: 'extracted',
+          lifecycle: 'draft',
+          authority: 'imported_source',
+          evidenceRefs: [sourceEvidence],
+        }))
+      }
+    }
+
+    const authoredRelations: Array<PackageRelationAssertion> = []
+    for (const [relationIndex, relationSource] of manifest.relations.entries()) {
+      if (!conceptIds.has(relationSource.subject) || !conceptIds.has(relationSource.object)) {
+        return yield* new VocabularyCompileError({
+          inputId: input.id,
+          message: `Structured Vocabulary Source relation ${relationSource.subject} ${relationSource.predicate} ${relationSource.object} references an unknown concept.`,
+        })
+      }
+      authoredRelations.push(new PackageRelationAssertion({
+        id: Schema.decodeUnknownSync(PackageRelationAssertion.fields.id)(
+          `relation-assertion:${namespace}:relation-${relationIndex + 1}`,
+        ),
+        artifactKind: 'package-relation-assertion',
+        packageId,
+        namespace,
+        subjectConceptId: Schema.decodeUnknownSync(Concept.fields.id)(`concept:${relationSource.subject}`),
+        predicate: relationSource.predicate,
+        objectConceptId: Schema.decodeUnknownSync(Concept.fields.id)(`concept:${relationSource.object}`),
+        status: 'extracted',
+        lifecycle: 'draft',
+        authority: 'imported_source',
+        evidenceRefs: [sourceEvidence],
+      }))
+    }
+
+    const draft = new SemanticPackageDraft({
+      id: Schema.decodeUnknownSync(SemanticPackageDraft.fields.id)(`package-draft:${namespace}:vocabulary`),
+      packageId,
+      sourceId: evidenceSource.id,
+      namespace,
+      lifecycle: 'draft',
+      artifacts: {
+        terms,
+        lexicalSenses,
+        concepts,
+        definitions,
+      },
+      authoredRelations,
+      relationCandidates: [],
+      constraintCandidates: [],
+      createdAt: deterministicInstant,
+    })
+
+    return new VocabularyCompileResult({
+      evidenceSource,
+      draft,
+    })
+  },
+)
+
 export class VocabularyCompiler extends Context.Service<VocabularyCompiler, {
   compile: (input: VocabularyInput) => Effect.Effect<VocabularyCompileResult, VocabularyCompileError>
 }>()('harmony/headless-runtime/VocabularyCompiler') {
@@ -82,6 +278,10 @@ export class VocabularyCompiler extends Context.Service<VocabularyCompiler, {
     VocabularyCompiler,
     VocabularyCompiler.of({
       compile: Effect.fn('VocabularyCompiler.compile')(function* (input) {
+        const structuredManifest = yield* parseStructuredManifest(input)
+        if (structuredManifest !== undefined) {
+          return yield* compileStructuredManifest(input, structuredManifest)
+        }
         const parsed = yield* parseSingleGlossaryEntry(input)
         const namespace = input.namespace
         const packageId = Schema.decodeUnknownSync(PackageIdSchema)(`package:${namespace}`)
@@ -195,7 +395,7 @@ export class PackagePublisher extends Context.Service<PackagePublisher, {
           namespace: draft.namespace,
           lifecycle: 'published',
           artifacts: publishArtifacts(draft.artifacts),
-          authoritativeRelations: [],
+          authoritativeRelations: publishRelations(draft.authoredRelations ?? []),
           authoritativeConstraints: [],
           publishedAt: deterministicInstant,
         })

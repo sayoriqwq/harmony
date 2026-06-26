@@ -1,0 +1,13 @@
+{
+  "name": "@harmony/base-vocabulary",
+  "type": "module",
+  "private": true,
+  "exports": {
+    "./manifest": "./src/manifest.ts",
+    "./input": "./src/input.ts"
+  },
+  "dependencies": {
+    "@harmony/semantic-model": "workspace:*",
+    "effect": "catalog:"
+  }
+}

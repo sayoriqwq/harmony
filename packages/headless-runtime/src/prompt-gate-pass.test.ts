@@ -4,6 +4,7 @@ import * as Fs from 'node:fs/promises'
 import * as Os from 'node:os'
 import * as Path from 'node:path'
 import { assert, describe, it } from '@effect/vitest'
+import { baseVocabularyMcpSourceV1 } from '@harmony/base-vocabulary/input'
 import {
   compileAndPublishVocabularyCommandFromMcp,
   McpProjectRefInput,
@@ -71,36 +72,25 @@ const readUserPromptSubmitFixture = Effect.fn('readUserPromptSubmitFixture')(fun
   })
 })
 
-function baseVocabularyPublishRequest(dataRoot: string, namespace: string, content: string) {
+function baseVocabularyPublishRequest(dataRoot: string) {
   return new McpSemanticCompileAndPublishVocabularyRequest({
     tool: 'semantic_compile_and_publish_vocabulary',
     effect: 'authority_command',
-    request_id: `request:${namespace}`,
+    request_id: 'request:base-vocabulary-v1',
     data_root: dataRoot,
     project_ref: mcpProjectRef,
-    operation_id: `operation:${namespace}`,
-    vocabulary_source: {
-      namespace,
-      vocabulary_kind: 'base',
-      content,
-    },
+    operation_id: 'operation:base-vocabulary-v1',
+    vocabulary_source: baseVocabularyMcpSourceV1,
   })
 }
 
 function publishBaseVocabulary(dataRoot: string) {
   return runFacade(Effect.gen(function* () {
     const facade = yield* SemanticRuntimeFacade
-    const sources = [
-      ['base.prompt_action', '检查：对目标内容进行验证、审阅或判断，不直接修改目标内容'],
-      ['base.prompt_action.edit', '修改：对目标内容进行编辑、改写、替换或改变'],
-      ['base.prompt_action.prohibit_edit', '禁止修改：用户明确要求不要编辑、改写、替换或改变目标内容'],
-    ] as const
-    for (const [namespace, content] of sources) {
-      const command = yield* compileAndPublishVocabularyCommandFromMcp(
-        baseVocabularyPublishRequest(dataRoot, namespace, content),
-      )
-      yield* facade.compileAndPublishVocabulary(command)
-    }
+    const command = yield* compileAndPublishVocabularyCommandFromMcp(
+      baseVocabularyPublishRequest(dataRoot),
+    )
+    yield* facade.compileAndPublishVocabulary(command)
   }))
 }
 

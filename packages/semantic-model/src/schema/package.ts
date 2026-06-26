@@ -1,5 +1,5 @@
 import { Schema } from 'effect'
-import { ConceptId, DefinitionId, EvidenceSourceId, LexicalSenseId, Namespace, PackageDraftId, PackageId, PackageVersionId, PublishedPackageId, SemanticKernelId, TermId } from './ids.ts'
+import { ConceptId, DefinitionId, EvidenceSourceId, LexicalSenseId, Namespace, PackageDraftId, PackageId, PackageVersionId, PublishedPackageId, RelationAssertionId, SemanticKernelId, TermId } from './ids.ts'
 import { EvidenceRef } from './input.ts'
 import { ArtifactStatus, AssertionLifecycle, PackageVersionState } from './literals.ts'
 
@@ -54,6 +54,22 @@ export class Definition extends Schema.Class<Definition>('harmony.semantic-model
   evidenceRefs: Schema.Array(EvidenceRef),
 }) {}
 
+export class PackageRelationAssertion extends Schema.Class<PackageRelationAssertion>(
+  'harmony.semantic-model/PackageRelationAssertion',
+)({
+  id: RelationAssertionId,
+  artifactKind: Schema.Literal('package-relation-assertion'),
+  packageId: PackageId,
+  namespace: Namespace,
+  subjectConceptId: ConceptId,
+  predicate: Schema.NonEmptyString,
+  objectConceptId: ConceptId,
+  status: ArtifactStatus,
+  lifecycle: AssertionLifecycle,
+  authority: Schema.Literal('imported_source'),
+  evidenceRefs: Schema.Array(EvidenceRef),
+}) {}
+
 export const StructuredArtifacts = Schema.Struct({
   terms: Schema.Array(Term),
   lexicalSenses: Schema.Array(LexicalSense),
@@ -95,6 +111,7 @@ export class SemanticPackageDraft extends Schema.Class<SemanticPackageDraft>(
   namespace: Namespace,
   lifecycle: Schema.Literal('draft'),
   artifacts: StructuredArtifacts,
+  authoredRelations: Schema.optionalKey(Schema.Array(PackageRelationAssertion)),
   relationCandidates: Schema.Array(DraftRelationCandidate),
   constraintCandidates: Schema.Array(DraftConstraintCandidate),
   createdAt: Schema.NonEmptyString,
@@ -108,7 +125,7 @@ export class PublishedSemanticPackage extends Schema.Class<PublishedSemanticPack
   namespace: Namespace,
   lifecycle: Schema.Literal('published'),
   artifacts: StructuredArtifacts,
-  authoritativeRelations: Schema.Array(Schema.Never),
+  authoritativeRelations: Schema.Array(PackageRelationAssertion),
   authoritativeConstraints: Schema.Array(Schema.Never),
   publishedAt: Schema.NonEmptyString,
 }) {}

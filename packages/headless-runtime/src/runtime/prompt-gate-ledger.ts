@@ -137,6 +137,9 @@ interface PromptActionClassification {
 }
 
 interface BaseVocabularyCapabilities {
+  readonly validateTerms: ReadonlyArray<string>
+  readonly rewriteTerms: ReadonlyArray<string>
+  readonly prohibitTerms: ReadonlyArray<string>
   readonly validate: boolean
   readonly rewrite: boolean
   readonly prohibitEdit: boolean
@@ -184,22 +187,67 @@ function publishedBaseVocabularyTexts(records: ReadonlyArray<LedgerRecordType>) 
   })
 }
 
-function baseVocabularyCapabilities(records: ReadonlyArray<LedgerRecordType>): BaseVocabularyCapabilities {
-  const texts = publishedBaseVocabularyTexts(records)
-  const hasText = (predicate: (text: string) => boolean) => texts.some(predicate)
-  return {
-    validate: hasPublishedBasePackage(records, 'base.prompt_action')
-      || hasText(text => text.includes('检查') && /验证|审阅|判断/.test(text)),
-    rewrite: hasPublishedBasePackage(records, 'base.prompt_action.edit')
-      || hasText(text => text.includes('修改') && /编辑|改写|替换|改变/.test(text)),
-    prohibitEdit: hasPublishedBasePackage(records, 'base.prompt_action.prohibit_edit')
-      || hasText(text => text.includes('禁止修改') || /明确要求不要.*(?:编辑|改写|替换|改变)/.test(text)),
-  }
+function uniqueTerms(terms: ReadonlyArray<string>) {
+  return Array.from(new Set(terms.filter(term => term.length > 0)))
+}
+
+function publishedTermsForConcept(records: ReadonlyArray<LedgerRecordType>, conceptId: string) {
+  return records.flatMap((record) => {
+    if (
+      record.recordKind !== 'PackageVersionPublished'
+      || !record.publishedPackage.namespace.startsWith('base.')
+      || record.publishedPackage.lifecycle !== 'published'
+    ) {
+      return []
+    }
+    return record.publishedPackage.artifacts.lexicalSenses.flatMap((sense) => {
+      if (String(sense.conceptId) !== conceptId) {
+        return []
+      }
+      const term = record.publishedPackage.artifacts.terms.find(candidate => candidate.id === sense.termId)
+      return term === undefined ? [] : [term.label]
+    })
+  })
+}
+
+function hasPublishedConcept(records: ReadonlyArray<LedgerRecordType>, conceptId: string) {
+  return records.some(record =>
+    record.recordKind === 'PackageVersionPublished'
+    && record.publishedPackage.namespace.startsWith('base.')
+    && record.publishedPackage.lifecycle === 'published'
+    && record.publishedPackage.artifacts.concepts.some(concept => String(concept.id) === conceptId),
+  )
+}
+
+function hasPublishedRelation(
+  records: ReadonlyArray<LedgerRecordType>,
+  subjectConceptId: string,
+  predicate: string,
+  objectConceptId: string,
+) {
+  return records.some(record =>
+    record.recordKind === 'PackageVersionPublished'
+    && record.publishedPackage.namespace.startsWith('base.')
+    && record.publishedPackage.lifecycle === 'published'
+    && record.publishedPackage.authoritativeRelations.some(relation =>
+      String(relation.subjectConceptId) === subjectConceptId
+      && relation.predicate === predicate
+      && String(relation.objectConceptId) === objectConceptId,
+    ),
+  )
 }
 
 const validateTerms = ['检查', '查看', '看看', 'check', 'review', 'validate']
 const rewriteTerms = ['修改', '改写', '编辑', 'rewrite', 'edit', 'modify', 'fix', 'improve']
-const prohibitEditPhrases = [
+const prohibitTerms = [
+  '不要',
+  '禁止',
+  '别',
+  'do not',
+  'don\'t',
+  'prohibit',
+]
+const legacyProhibitEditPhrases = [
   'do not edit it',
   'do not edit',
   'don\'t edit',
@@ -214,13 +262,81 @@ const prohibitEditPhrases = [
   '别编辑',
 ]
 
+function baseVocabularyCapabilities(records: ReadonlyArray<LedgerRecordType>): BaseVocabularyCapabilities {
+  const texts = publishedBaseVocabularyTexts(records)
+  const hasText = (predicate: (text: string) => boolean) => texts.some(predicate)
+  const structuredValidateTerms = publishedTermsForConcept(records, 'concept:base.action.validate')
+  const structuredRewriteTerms = publishedTermsForConcept(records, 'concept:base.action.rewrite')
+  const structuredProhibitTerms = publishedTermsForConcept(records, 'concept:base.constraint.prohibit')
+  const hasStructuredValidate = hasPublishedConcept(records, 'concept:base.action.validate')
+  const hasStructuredRewrite = hasPublishedConcept(records, 'concept:base.action.rewrite')
+    && hasPublishedRelation(
+      records,
+      'concept:base.action.rewrite',
+      'has_trait',
+      'concept:base.effect.mutating',
+    )
+  const hasStructuredProhibit = hasPublishedConcept(records, 'concept:base.constraint.prohibit')
+    && hasStructuredRewrite
+  const hasLegacyValidate = hasPublishedBasePackage(records, 'base.prompt_action')
+    || hasText(text => text.includes('检查') && /验证|审阅|判断/.test(text))
+  const hasLegacyRewrite = hasPublishedBasePackage(records, 'base.prompt_action.edit')
+    || hasText(text => text.includes('修改') && /编辑|改写|替换|改变/.test(text))
+  const hasLegacyProhibit = hasPublishedBasePackage(records, 'base.prompt_action.prohibit_edit')
+    || hasText(text => text.includes('禁止修改') || /明确要求不要.*(?:编辑|改写|替换|改变)/.test(text))
+
+  return {
+    validateTerms: uniqueTerms([
+      ...structuredValidateTerms,
+      ...(hasLegacyValidate ? validateTerms : []),
+    ]),
+    rewriteTerms: uniqueTerms([
+      ...structuredRewriteTerms,
+      ...(hasLegacyRewrite ? rewriteTerms : []),
+    ]),
+    prohibitTerms: uniqueTerms([
+      ...structuredProhibitTerms,
+      ...(hasLegacyProhibit ? prohibitTerms : []),
+    ]),
+    validate: hasStructuredValidate || hasLegacyValidate,
+    rewrite: hasStructuredRewrite || hasLegacyRewrite,
+    prohibitEdit: hasStructuredProhibit || hasLegacyProhibit,
+  }
+}
+
+function firstProhibitEditMatch(
+  prompt: string,
+  prohibitedTerms: ReadonlyArray<string>,
+  editableTerms: ReadonlyArray<string>,
+): PromptMatch | undefined {
+  const legacyPhrase = firstPromptMatch(prompt, legacyProhibitEditPhrases)
+  if (legacyPhrase !== undefined) {
+    return legacyPhrase
+  }
+  const prohibitMatch = firstPromptMatch(prompt, prohibitedTerms)
+  const rewriteMatch = firstPromptMatch(prompt, editableTerms)
+  if (prohibitMatch === undefined || rewriteMatch === undefined) {
+    return undefined
+  }
+  if (prohibitMatch.index > rewriteMatch.index) {
+    return undefined
+  }
+  const end = rewriteMatch.index + rewriteMatch.text.length
+  return {
+    text: prompt.slice(prohibitMatch.index, end),
+    index: prohibitMatch.index,
+  }
+}
+
 function classifyPrompt(
   prompt: string,
   capabilities: BaseVocabularyCapabilities,
 ): PromptActionClassification | undefined {
-  const validateMatch = capabilities.validate ? firstPromptMatch(prompt, validateTerms) : undefined
-  const rewriteMatch = capabilities.rewrite ? firstPromptMatch(prompt, rewriteTerms) : undefined
-  const prohibitedMatch = capabilities.prohibitEdit ? firstPromptMatch(prompt, prohibitEditPhrases) : undefined
+  const validateMatch = capabilities.validate ? firstPromptMatch(prompt, capabilities.validateTerms) : undefined
+  const rewriteMatch = capabilities.rewrite ? firstPromptMatch(prompt, capabilities.rewriteTerms) : undefined
+  const prohibitedMatch = capabilities.prohibitEdit
+    ? firstProhibitEditMatch(prompt, capabilities.prohibitTerms, capabilities.rewriteTerms)
+    : undefined
 
   if (validateMatch !== undefined && prohibitedMatch !== undefined) {
     return {
