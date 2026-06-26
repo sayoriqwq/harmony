@@ -254,7 +254,7 @@ function vocabularyInputFromMcp(input: McpVocabularySourceInput) {
 
 export const statusQueryFromMcp = Effect.fn('statusQueryFromMcp')(
   function* (
-    request: McpSemanticStatusRequest,
+    request: unknown,
   ): Effect.fn.Return<SemanticRuntimeStatusQuery, Schema.SchemaError> {
     const decoded = yield* Schema.decodeUnknownEffect(McpSemanticStatusRequest)(request)
     return new SemanticRuntimeStatusQuery({
@@ -267,7 +267,7 @@ export const statusQueryFromMcp = Effect.fn('statusQueryFromMcp')(
 
 export const getCaseQueryFromMcp = Effect.fn('getCaseQueryFromMcp')(
   function* (
-    request: McpSemanticGetCaseRequest,
+    request: unknown,
   ): Effect.fn.Return<SemanticRuntimeGetCaseQuery, Schema.SchemaError> {
     const decoded = yield* Schema.decodeUnknownEffect(McpSemanticGetCaseRequest)(request)
     return yield* Schema.decodeUnknownEffect(SemanticRuntimeGetCaseQuery)({
@@ -281,7 +281,7 @@ export const getCaseQueryFromMcp = Effect.fn('getCaseQueryFromMcp')(
 
 export const compileVocabularyDraftCommandFromMcp = Effect.fn('compileVocabularyDraftCommandFromMcp')(
   function* (
-    request: McpSemanticCompileVocabularyDraftRequest,
+    request: unknown,
   ): Effect.fn.Return<SemanticRuntimeCompileVocabularyDraftCommand, Schema.SchemaError> {
     const decoded = yield* Schema.decodeUnknownEffect(McpSemanticCompileVocabularyDraftRequest)(request)
     return yield* Schema.decodeUnknownEffect(SemanticRuntimeCompileVocabularyDraftCommand)({
@@ -296,7 +296,7 @@ export const compileVocabularyDraftCommandFromMcp = Effect.fn('compileVocabulary
 
 export const compileAndPublishVocabularyCommandFromMcp = Effect.fn('compileAndPublishVocabularyCommandFromMcp')(
   function* (
-    request: McpSemanticCompileAndPublishVocabularyRequest,
+    request: unknown,
   ): Effect.fn.Return<SemanticRuntimeCompileAndPublishVocabularyCommand, Schema.SchemaError> {
     const decoded = yield* Schema.decodeUnknownEffect(McpSemanticCompileAndPublishVocabularyRequest)(request)
     return yield* Schema.decodeUnknownEffect(SemanticRuntimeCompileAndPublishVocabularyCommand)({

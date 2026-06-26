@@ -1,5 +1,10 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema.json",
+  "entry": [
+    "plugins/harmony-semantic-runtime/scripts/pre-tool-use.mjs",
+    "plugins/harmony-semantic-runtime/scripts/semantic-runtime-mcp.mjs",
+    "plugins/harmony-semantic-runtime/scripts/user-prompt-submit.mjs"
+  ],
   "ignoreDependencies": [
     "@effect/platform-node"
   ]

@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "semantic_runtime": {
+      "command": "node",
+      "args": [
+        "./scripts/semantic-runtime-mcp.mjs"
+      ],
+      "cwd": "."
+    }
+  }
+}

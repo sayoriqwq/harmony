@@ -20,6 +20,7 @@
     "./runtime/runtime-data-locator": "./src/runtime/runtime-data-locator.ts",
     "./runtime/integration-health": "./src/runtime/integration-health.ts",
     "./runtime/semantic-runtime-facade": "./src/runtime/semantic-runtime-facade.ts",
+    "./runtime/semantic-runtime-mcp-dispatcher": "./src/runtime/semantic-runtime-mcp-dispatcher.ts",
     "./runtime/vocabulary-command-ledger": "./src/runtime/vocabulary-command-ledger.ts",
     "./runtime/layers": "./src/runtime/layers.ts",
     "./ledger": "./src/runtime/ledger.ts"

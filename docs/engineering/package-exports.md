@@ -39,6 +39,7 @@ Harmony 使用显式 package subpath 作为 public module surface。不使用 ro
 - `runtime/correction-workflow`
 - `runtime/correction-diagnosis-workflow`
 - `runtime/semantic-patch-publication-workflow`
+- `runtime/semantic-runtime-mcp-dispatcher`
 - `runtime/layers`
 
 `@harmony/headless-runtime/ledger` 当前暴露 V1 ledger service 和 derived view helpers。它仍是 in-memory V1 语义实现，不代表 durable persistence 已完成。

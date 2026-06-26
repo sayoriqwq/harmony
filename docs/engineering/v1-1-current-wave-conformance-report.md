@@ -6,9 +6,9 @@ This report covers the AFK-verifiable V1.1 runtime path after slices #18, #19,
 #21, #22, #23, #24, #25, #27, and #28.
 
 It does not claim live Codex plugin lifecycle or MCP approval behavior. Those
-remain HITL blockers in #20 and #26 because this repository currently contains
-no installable `.codex-plugin/plugin.json` package or plugin-scoped MCP manifest
-to exercise against the Codex host.
+remain HITL blockers in #20 and #26. The repository now contains a repo-local
+Codex plugin package and MCP manifest, but live Codex install, hook trust, and
+approval UX still require human-in-the-loop host verification.
 
 ## Pass
 
@@ -52,17 +52,17 @@ to exercise against the Codex host.
   hooks are unavailable remain non-guarantees.
 - Ledger corruption is represented through decode errors and degraded behavior,
   but there is no repair workflow in this wave.
-- Vocabulary MCP support is facade-shaped and MCP-request-shaped, not a live
-  Codex MCP server.
+- Vocabulary MCP support has a repo-local stdio MCP server smoke path. It is not
+  yet verified as a live Codex-installed plugin.
 
 ## HITL Blockers
 
 - #20 must verify live Codex plugin install, enable, disable, update, uninstall,
   reinstall, hook trust, plugin data retention, and plugin-bundled MCP
-  availability. No installable plugin package is present in this repo yet.
+  availability against the repo-local plugin package.
 - #26 must verify live Codex MCP approval policy behavior for query tools and
   authority commands. Static metadata exists, but host approval UX is not
-  verifiable without the live plugin/MCP package from #20.
+  verifiable without the live plugin lifecycle work from #20.
 
 ## Verification
 
@@ -75,7 +75,7 @@ pnpm lint
 pnpm knip
 ```
 
-Latest passing test coverage: 17 test files, 43 tests.
+Latest passing test coverage: 18 test files, 46 tests.
 
 `pnpm verify` reaches the final `effect:verify` step and then fails on
 pre-existing Effect harness baseline drift:

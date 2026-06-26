@@ -1,0 +1,26 @@
+{
+  "name": "harmony-semantic-runtime",
+  "version": "0.1.0",
+  "description": "Codex hooks and MCP tools for the Harmony semantic runtime.",
+  "author": {
+    "name": "Harmony"
+  },
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Harmony Semantic Runtime",
+    "shortDescription": "Semantic gate hooks and runtime query tools for Codex.",
+    "longDescription": "Harmony Semantic Runtime connects Codex host hooks to the repository semantic gate and exposes read and vocabulary MCP tools backed by the headless runtime.",
+    "developerName": "Harmony",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Read",
+      "Write"
+    ],
+    "defaultPrompt": [
+      "Check semantic runtime status",
+      "Show the current semantic case",
+      "Compile a vocabulary draft"
+    ]
+  }
+}
