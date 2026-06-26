@@ -1,0 +1,20 @@
+{
+  "name": "harmony-local",
+  "interface": {
+    "displayName": "Harmony Local"
+  },
+  "plugins": [
+    {
+      "name": "harmony-semantic-runtime",
+      "source": {
+        "source": "local",
+        "path": "./harmony-semantic-runtime"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}
