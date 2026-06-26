@@ -99,7 +99,7 @@ describe('glossary Vocabulary Source workflow', () => {
 
       assert.strictEqual(firstResult.packageVersion.version, 'v1')
       assert.strictEqual(firstResult.packageVersion.runtimeBinding.schemaVersion, 'semantic-package.v1')
-      assert.strictEqual(firstResult.packageVersion.runtimeBinding.effectVersion, 'effect@4.0.0-beta.83')
+      assert.strictEqual(firstResult.packageVersion.runtimeBinding.effectVersion, 'effect@4.0.0-beta.90')
       assert.strictEqual(firstResult.currentView.currentVersionId, firstResult.packageVersion.id)
       assert.strictEqual(firstResult.currentView.sourceIds[0], firstResult.evidenceSource.id)
       assert.strictEqual(firstResult.ledgerRecords.length, 3)

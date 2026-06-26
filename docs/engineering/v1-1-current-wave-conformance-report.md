@@ -77,15 +77,6 @@ pnpm knip
 
 Latest passing test coverage: 18 test files, 46 tests.
 
-`pnpm verify` reaches the final `effect:verify` step and then fails on
-pre-existing Effect harness baseline drift:
-
-- target packages are pinned to Effect `4.0.0-beta.83`; the harness expects
-  `4.0.0-beta.90`
-- `.effect-harness.json` source split and package baseline are behind the
-  harness expectation
-- local `.codex/skills/effect-code` and `effect-feedback` templates differ from
-  the current harness runtime template
-
-This report treats the harness drift as an environment/baseline blocker, not as
-evidence of failure in the V1.1 current-wave runtime slices.
+The repository has been migrated to the current Effect harness baseline:
+Effect `4.0.0-beta.90`, `@effect/tsgo` `0.14.6`, and native-preview
+`20260624.1`.

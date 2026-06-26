@@ -121,7 +121,7 @@ Effect-first 落地要求：Evidence source 和 Structured artifact 都应有 Sc
 
 ## Effect 落地约束
 
-当前仓库使用 Effect `4.0.0-beta.83` 与 `@effect/tsgo`。V1 实现应遵守：
+当前仓库使用 Effect `4.0.0-beta.90` 与 `@effect/tsgo`。V1 实现应遵守：
 
 - Harmony 是 Effect-first 系统，业务运行代码应尽可能采用 Effect-native 结构，而不是在普通 TypeScript 代码外层包一层 Effect。
 - 领域对象优先用 `Schema.Class`、`Schema.Struct`、branded id 和 literal union 表达。
